@@ -1,10 +1,26 @@
 """Prompts for every Argon stage. Kept together so they are easy to tune."""
+from pathlib import Path
+
+
+def load_skill(name: str) -> str:
+    """Concatenates a skill folder (SKILL.md, references/, examples/) into one instruction block."""
+    root = Path(__file__).with_name("skills") / name
+    parts = [(root / "SKILL.md").read_text()]
+    for sub in ("references", "examples"):
+        for f in sorted((root / sub).glob("*")):
+            parts.append(f"\n\n<<< {sub}/{f.name} >>>\n{f.read_text()}")
+    return "".join(parts)
+
 
 SYSTEM = (
     "You are ZoneZero, a wildfire home-hardening assistant. You reason about how wind-blown embers ignite homes, "
     "grounded in IBHS and CAL FIRE guidance (Zone 0 = the first 5 ft around the house must be ember-resistant). "
     "You are precise, you cite video timestamps, and you never invent objects you did not see."
 )
+
+# The scene-modeling skill rides in the system instruction of every modeling call (survey,
+# generate, repair, fidelity). It is a stable prefix, so Gemini's implicit cache makes it cheap.
+SYSTEM_MODELING = SYSTEM + "\n\nYou have the following skill. Follow it.\n\n" + load_skill("zonezero-scene-modeling")
 
 CONVENTIONS = """Coordinate conventions (feet):
 - The house footprint is centered at the origin. +x = East, -z = North, y = up.
@@ -29,7 +45,8 @@ kit.fence({ from: [x, z], to: [x, z], material: "wood"|"metal"|"masonry", attach
 kit.plant({ x, z, kind: "juniper"|"shrub"|"tree"|"conifer"|"grass", height, color: "#rrggbb" })   // tree = broadleaf; conifer = pine/fir
 kit.forest({ x, z, w, d, density: 0.05-1, height })            // a stand of conifers (e.g. forest edge behind the lot)
 kit.neighbor({ x, z, w, d, h, roof, siding, sidingColor })    // a neighboring building (center x,z); keep >= 2 ft from our footprint
-kit.paving({ x, z, w, d, kind: "driveway"|"path"|"patio"|"street" })
+kit.paving({ x, z, w, d, kind: "driveway"|"path"|"patio"|"street"|"pool", shape: "rect"|"circle"|"ring", inner })
+                                                              // ring = circular drive around an unpaved island (inner 0.1-0.9)
 kit.mulch({ x, z, w, d, material: "bark"|"gravel" })          // rectangle centered at x,z
 kit.firewood({ x, z })
 kit.object({ x, z, kind: "patio_furniture"|"trash_bin"|"propane_tank"|"car"|"doormat"|"planter", material: "wood"|"plastic"|"metal"|"fabric"|"wicker" })
@@ -102,6 +119,8 @@ same viewpoint. Compare them. Look for: missing or extra objects, wrong side of 
 AND the overall look: house SHAPE (missing or wrong wings, garage projecting forward or not, L/T shape, lower sections), number of
 stories, roof style/ridge direction per block, gable ends, garage and porch position, siding/plant colors and sizes, neighbors,
 driveway/street, forest edge, and whether the camera framing matches. Ignore lighting and the low-poly style.
+Also fail anything physically impossible in the render: a tree or shrub on a driveway, street, path or pool; paving covering
+lawn, beds or a drive island; objects inside buildings; floating or overlapping objects.
 
 Current scene.js:
 ```js

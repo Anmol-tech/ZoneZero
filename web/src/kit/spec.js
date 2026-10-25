@@ -13,7 +13,8 @@ export const MATERIALS = {
   plant: ["juniper", "shrub", "tree", "conifer", "grass"],
   wainscot: ["none", "stone", "brick"],
   roofStyle: ["hip", "gable", "flat"],
-  paving: ["driveway", "path", "patio", "street"],
+  paving: ["driveway", "path", "patio", "street", "pool"],
+  pavingShape: ["rect", "circle", "ring"],
   mulch: ["bark", "gravel"],
   objectKind: ["patio_furniture", "trash_bin", "propane_tank", "car", "doormat", "planter"],
   objectMaterial: ["wood", "plastic", "metal", "fabric", "wicker"],
@@ -146,10 +147,12 @@ export function createKit() {
       return push("neighbor", { x, z, w, d, h, roof, siding, stories: stories ?? (h >= 17 ? 2 : 1), sidingColor: sc });
     },
     // Non-combustible ground surfaces (visual + they matter for spacing).
-    paving({ x, z, w, d, kind = "driveway" } = {}) {
+    // shape "circle" = ellipse filling w×d; "ring" = circular drive around an unpaved island (inner = island size 0.1–0.9 of w/d).
+    paving({ x, z, w, d, kind = "driveway", shape = "rect", inner = 0.45 } = {}) {
       num("paving", "x", x, -150, 150); num("paving", "z", z, -150, 150); num("paving", "w", w, 2, 200); num("paving", "d", d, 2, 200);
-      oneOf("paving", "kind", kind, MATERIALS.paving);
-      return push("paving", { x, z, w, d, surface: kind });
+      oneOf("paving", "kind", kind, MATERIALS.paving); oneOf("paving", "shape", shape, MATERIALS.pavingShape);
+      if (shape === "ring") num("paving", "inner", inner, 0.1, 0.9);
+      return push("paving", { x, z, w, d, surface: kind, shape, ...(shape === "ring" ? { inner } : {}) });
     },
     firewood({ x, z } = {}) {
       num("firewood", "x", x, -150, 150); num("firewood", "z", z, -150, 150);
@@ -170,6 +173,23 @@ export function createKit() {
   };
   return { kit, spec, errors };
 }
+
+// Is ground point (x, z) covered by this paving (respecting circle/ring shapes)?
+export function onPaving(p, x, z) {
+  const dx = (x - p.x) / (p.w / 2), dz = (z - p.z) / (p.d / 2);
+  if (p.shape === "circle" || p.shape === "ring") {
+    const r = Math.hypot(dx, dz);
+    return r < 1 && !(p.shape === "ring" && r < p.inner);
+  }
+  return Math.abs(dx) < 1 && Math.abs(dz) < 1;
+}
+
+// What may sit on each paved surface. Plants, mulch and firewood never go on paving.
+const ALLOWED_ON = {
+  driveway: ["car", "trash_bin", "planter"], street: ["car"], path: ["doormat", "planter", "trash_bin"],
+  patio: ["patio_furniture", "planter", "doormat", "propane_tank", "trash_bin"], pool: [],
+};
+const label = (o) => o.species || o.objKind || o.kind;
 
 // Footprint rectangles: the main block plus any wings, as {x, z, w, d} centered boxes.
 export function houseRects(house) {
@@ -203,6 +223,28 @@ export function validateSpec(spec) {
       // Gable vents sit above the eaves, up to the roof peak (~12 ft above the wall top).
       if (v.h > spec.house.h + 12) errors.push(`${v.id} vent h=${v.h} is above the roof peak (wall height ${spec.house.h} + up to 12 ft of roof)`);
     }
+  }
+  // Placement sanity: nothing growing on pavement or inside a neighbor's house; vehicles only on drives/streets.
+  const pavings = spec.objects.filter((o) => o.kind === "paving");
+  const neighbors = spec.objects.filter((o) => o.kind === "neighbor");
+  const inNeighbor = (o) => neighbors.find((n) => Math.abs(o.x - n.x) < n.w / 2 - 0.5 && Math.abs(o.z - n.z) < n.d / 2 - 0.5);
+  // Generated forest trees that land on pavement or buildings are simply dropped.
+  spec.objects = spec.objects.filter((o) => !(o.forest && (pavings.some((p) => onPaving(p, o.x, o.z)) || inNeighbor(o)
+    || (spec.house && houseRects(spec.house).some((r) => Math.abs(o.x - r.x) < r.w / 2 + 3 && Math.abs(o.z - r.z) < r.d / 2 + 3)))));
+  for (const o of spec.objects) {
+    if (!["plant", "mulch", "firewood", "object"].includes(o.kind)) continue;
+    const n = inNeighbor(o);
+    if (n) errors.push(`${o.id} (${label(o)}) at (${o.x}, ${o.z}) is inside neighbor ${n.id}'s footprint; move it outside that building`);
+    for (const p of pavings) {
+      if (!onPaving(p, o.x, o.z)) continue;
+      if (o.kind === "object" && ALLOWED_ON[p.surface].includes(o.objKind)) continue;
+      const hint = p.surface === "driveway" && (o.kind === "plant" || o.kind === "mulch")
+        ? " If it grows in an island inside a circular drive, use paving shape \"ring\" (the island stays unpaved); otherwise move it beside the paving."
+        : " Move it beside the paving, or shrink/split the paving to match the footage.";
+      errors.push(`${o.id} (${label(o)}) at (${o.x}, ${o.z}) sits on the ${p.surface} ${p.id}.${hint}`);
+    }
+    if (o.kind === "object" && o.objKind === "car" && !pavings.some((p) => (p.surface === "driveway" || p.surface === "street") && onPaving(p, o.x, o.z)))
+      spec.notes.push(`check: ${o.id} (car) is not on a driveway or street`);
   }
   for (const o of spec.objects) {
     if (o.kind === "neighbor" && spec.house) {

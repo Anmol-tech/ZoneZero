@@ -410,8 +410,29 @@ export function buildScene(spec) {
         break;
       }
       case "paving": {
-        const m = flatPatch(o.w, o.d, groundTexture(o.surface), o.surface === "street" ? 0.04 : 0.06, o.surface === "street" ? 24 : 10);
-        m.position.x = o.x; m.position.z = o.z; reg(o.id, m);
+        const y = o.surface === "street" ? 0.04 : 0.06;
+        if (o.surface === "pool") {
+          // Pool: coping edge + water surface.
+          const g = new THREE.Group();
+          const edge = new THREE.Mesh(new THREE.BoxGeometry(o.w + 2, 0.3, o.d + 2), mat(0xd9d4ca)); edge.position.y = 0.15; g.add(edge);
+          const water = new THREE.Mesh(new THREE.PlaneGeometry(o.w, o.d), mat(0x3aa6c9, { roughness: 0.1, metalness: 0.2, emissive: new THREE.Color(0x0a3344) }));
+          water.rotation.x = -Math.PI / 2; water.position.y = 0.32; g.add(water);
+          g.position.set(o.x, 0, o.z); reg(o.id, g);
+        } else if (o.shape === "circle" || o.shape === "ring") {
+          const t = groundTexture(o.surface).clone(); t.needsUpdate = true; t.repeat.set(o.w / 10, o.d / 10);
+          const geo = o.shape === "ring" ? new THREE.RingGeometry(o.inner, 1, 48) : new THREE.CircleGeometry(1, 48);
+          const m = new THREE.Mesh(geo, texMat(t));
+          m.rotation.x = -Math.PI / 2; m.scale.set(o.w / 2, o.d / 2, 1); m.position.set(o.x, y, o.z); m.receiveShadow = true;
+          reg(o.id, m);
+          if (o.shape === "ring") {
+            // Curb around the island.
+            const curb = new THREE.Mesh(new THREE.RingGeometry(o.inner * 0.97, o.inner, 48), mat(0xcfcac0));
+            curb.rotation.x = -Math.PI / 2; curb.scale.set(o.w / 2, o.d / 2, 1); curb.position.set(o.x, y + 0.03, o.z); reg(o.id, curb);
+          }
+        } else {
+          const m = flatPatch(o.w, o.d, groundTexture(o.surface), y, o.surface === "street" ? 24 : 10);
+          m.position.x = o.x; m.position.z = o.z; reg(o.id, m);
+        }
         break;
       }
       case "neighbor": {

@@ -106,7 +106,7 @@ async def sim_record(run: Run, spec_n: int, label: str, wind: int | None = None)
 
 async def stage_survey(run: Run, video: Path):
     await run.emit("survey", "Argon is watching the full walk-around video…", "running")
-    inv, _ = await asyncio.to_thread(g.ask_json, [g.text(P.SURVEY.format(conventions=P.CONVENTIONS)), g.video(video, resolution="high", agentic=True)], system=P.SYSTEM, thinking="high")
+    inv, _ = await asyncio.to_thread(g.ask_json, [g.text(P.SURVEY.format(conventions=P.CONVENTIONS)), g.video(video, resolution="high", agentic=True)], system=P.SYSTEM_MODELING, thinking="high")
     run.inventory = inv
     run.path("inventory.json").write_text(json.dumps(inv, indent=1))
     await run.emit("survey", inv.get("summary", "Inventory ready"), "done", inventory=inv)
@@ -122,7 +122,7 @@ async def compile_with_repair(run: Run, code: str, stage: str, attempts: int = 2
         await run.emit(stage, f"Validator rejected scene.js ({len(out['errors'])} errors); sending errors back to Argon", "warn", errors=out["errors"][:8])
         if i == attempts:
             break
-        reply, _ = await asyncio.to_thread(g.ask, [g.text(P.FIX_SCENE.format(errors="\n".join(out["errors"]), code=code))], system=P.SYSTEM, thinking="low")
+        reply, _ = await asyncio.to_thread(g.ask, [g.text(P.FIX_SCENE.format(errors="\n".join(out["errors"]), code=code))], system=P.SYSTEM_MODELING, thinking="low")
         code = g.extract_code(reply)
     raise RuntimeError("scene.js still invalid after repairs")
 
@@ -132,7 +132,7 @@ async def stage_generate(run: Run):
     reply, _ = await asyncio.to_thread(
         g.ask, [g.text(P.GENERATE.format(kit=P.KIT_DOC, conventions=P.CONVENTIONS, inventory=json.dumps(run.inventory, indent=1))),
                 g.video(run.path("video.mp4"), resolution="medium")],
-        system=P.SYSTEM, thinking="high")
+        system=P.SYSTEM_MODELING, thinking="high")
     spec, code = await compile_with_repair(run, g.extract_code(reply), "generate")
     v = run.add_spec(spec, "generated", code)
     await run.emit("generate", f"Model built: {len(spec['objects'])} objects, {len(spec['cameras'])} matched cameras", "done", version=v, lines=code.count("\n") + 1)
@@ -151,7 +151,7 @@ async def stage_fidelity(run: Run, video: Path):
                       g.text(f"Camera {r['id']} — RENDER of the model:"), g.image(r["path"])]
             pairs.append({"id": r["id"], "ts": r["videoTimestamp"], "real": run.url(f"fid{rnd}/real_{r['id']}.jpg"), "render": run.url(f"fid{rnd}/render_{r['id']}.jpg")})
         code = run.path(run.state["spec_versions"][-1].get("scene", "")).read_text() if run.state["spec_versions"][-1].get("scene") else ""
-        reply, _ = await asyncio.to_thread(g.ask, [g.text(P.FIDELITY.format(code=code))] + parts, system=P.SYSTEM, thinking="medium")
+        reply, _ = await asyncio.to_thread(g.ask, [g.text(P.FIDELITY.format(code=code))] + parts, system=P.SYSTEM_MODELING, thinking="medium")
         verdict = g.parse_json(reply)
         entry = {"round": rnd, "pairs": pairs, **verdict}
         run.state["fidelity"].append(entry)
