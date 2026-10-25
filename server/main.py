@@ -39,12 +39,21 @@ def get_run(rid: str) -> Run:
 async def create_run(video: UploadFile | None = File(None), sample: str = Form(""), wind: int = Form(45), mph: int = Form(30)):
     run = Run()
     run.wind, run.mph = wind % 360, mph
+    run.state["conditions"] = {"wind": run.wind, "mph": run.mph, "seed": run.seed}
     RUN_REGISTRY[run.id] = run
     src = None
     if video is not None and video.filename:
+        run.state["source"] = {"name": Path(video.filename).name, "kind": "upload"}
         src = run.path("input" + Path(video.filename).suffix.lower())
         with src.open("wb") as f:
             shutil.copyfileobj(video.file, f)
+    elif sample == "stock":
+        src = pipeline.SAMPLES / "stock" / "pexels-kindel-media-7578541.mp4"
+        if not src.is_file():
+            raise HTTPException(404, "The sample footage is not available on this machine. Upload a video instead.")
+        run.state["source"] = {"name": "Modern home & patio", "kind": "stock", "credit": "Kindel Media / Pexels",
+                               "url": "https://www.pexels.com/video/an-exterior-design-of-a-modern-house-7578541/",
+                               "coverage": "Partial exterior"}
     elif sample == "video":
         vids = sorted(pipeline.SAMPLES.glob("*.mp4")) + sorted(pipeline.SAMPLES.glob("*.mov"))
         if not vids:
@@ -75,7 +84,8 @@ async def events(rid: str, since: int = 0):
 
 @app.get("/api/runs/{rid}/state")
 async def state(rid: str):
-    return get_run(rid).state
+    run = get_run(rid)
+    return {**run.state, "inventory": run.inventory}
 
 
 @app.post("/api/runs/{rid}/wind")

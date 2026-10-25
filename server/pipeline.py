@@ -42,6 +42,10 @@ class Run:
         run.events = [json.loads(line) for line in run.path("events.jsonl").read_text().splitlines()]
         if run.path("inventory.json").exists():
             run.inventory = json.loads(run.path("inventory.json").read_text())
+        conditions = run.state.get("conditions", {})
+        run.wind = conditions.get("wind", run.state["sims"][0]["wind"] if run.state.get("sims") else 45)
+        run.mph = conditions.get("mph", 30)
+        run.seed = conditions.get("seed", 7)
         return run
 
     def path(self, name: str) -> Path:
@@ -90,7 +94,9 @@ async def sim_record(run: Run, spec_n: int, label: str, wind: int | None = None)
     wind = run.wind if wind is None else wind
     name = f"sim_{len(run.state['sims'])}_{label.lower().replace(' ', '_')}.mp4"
     res = await renderer.record_sim(run.spec(spec_n), {"windFrom": wind, "mph": run.mph, "seed": run.seed, "label": label}, run.path(name))
-    sim = {"label": label, "spec_n": spec_n, "wind": wind, "video": run.url(name), "file": name, "result": short_result(res)}
+    sim = {"label": label, "spec_n": spec_n, "wind": wind, "mph": run.mph, "seed": run.seed,
+           "duration": res.get("opts", {}).get("duration", 90),
+           "video": run.url(name), "file": name, "result": short_result(res)}
     run.state["sims"].append(sim)
     return sim
 
@@ -225,6 +231,7 @@ async def run_pipeline(run: Run, video_src: Path | None):
             await run.emit("prepare", "Preparing video (480p)…", "running")
             await asyncio.to_thread(tools.prepare_video, video_src, video)
             run.state["video"] = run.url("video.mp4")
+            run.state["video_duration"] = tools.video_duration(video)
             await run.emit("prepare", f"Video ready ({tools.video_duration(video):.0f}s)", "done", video=run.state["video"])
             await stage_survey(run, video)
             await stage_generate(run)

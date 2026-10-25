@@ -3,77 +3,47 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>ZoneZero</title>
+  <meta name="theme-color" content="#101316" />
+  <title>ZoneZero — Home ember assessment</title>
   <link rel="stylesheet" href="/src/ui/style.css" />
 </head>
 <body>
   <header>
-    <div class="brand"><span class="logo">🔥</span> ZoneZero <small>see how embers would ignite your home, and what stops them</small></div>
+    <a class="brand" href="/" aria-label="ZoneZero home"><span class="logo" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="m4 11 8-7 8 7v9H4v-9Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><path d="M10 20v-7h4v7" stroke="currentColor" stroke-width="1.8"/></svg></span><span>ZoneZero<small>Understand the risk. Know the next step.</small></span></a>
     <div class="controls">
-      <label class="file">📹 Walk-around video <input id="video" type="file" accept="video/*" /></label>
-      <span id="videoName" class="muted"></span>
-      <label>Wind from
-        <select id="wind">
-          <option value="0">N</option><option value="45" selected>NE (Santa Ana)</option><option value="90">E</option><option value="135">SE</option>
-          <option value="180">S</option><option value="225">SW</option><option value="270">W</option><option value="315">NW</option>
-        </select>
-      </label>
-      <button id="start" class="primary">Analyze my home</button>
-      <button id="sample" title="Skip the video; use the built-in demo property">Demo property</button>
-      <span id="health" class="badge"></span>
+      <label class="file" for="video"><span aria-hidden="true">↑</span> Upload footage<input id="video" type="file" accept="video/*" /></label>
+      <span id="videoName" class="file-name"></span>
+      <label class="wind-label">Wind<select id="wind"><option value="0">N</option><option value="45" selected>NE</option><option value="90">E</option><option value="135">SE</option><option value="180">S</option><option value="225">SW</option><option value="270">W</option><option value="315">NW</option></select></label>
+      <button id="start" class="primary">Analyze video <span aria-hidden="true">↗</span></button>
+      <button id="sample">Try sample footage</button>
+      <span id="health" class="health">Connecting</span>
     </div>
   </header>
-
+  <div id="notice" class="notice" role="alert" hidden></div>
   <main>
-    <section class="left">
-      <div class="card">
-        <h3>Your video</h3>
-        <video id="player" controls muted playsinline></video>
-        <div id="chips" class="chips"></div>
-      </div>
-      <div class="card">
-        <h3>Judge test: new wind</h3>
-        <p class="muted">Does the hardened home hold if the wind shifts? If not, Argon keeps fixing.</p>
-        <div class="row">
-          <select id="judgeWind">
-            <option value="0">N</option><option value="45">NE</option><option value="90">E</option><option value="135">SE</option>
-            <option value="180">S</option><option value="225">SW</option><option value="270">W</option><option value="315">NW</option>
-          </select>
-          <button id="windTest" disabled>Test this wind</button>
-        </div>
-      </div>
-      <div class="card">
-        <h3>Managed Agent: all-winds stress test</h3>
-        <p class="muted">An Antigravity agent searches its sandbox for the cheapest fix set that survives 8 wind directions × 3 seeds, then we re-check its answer locally.</p>
-        <button id="agent" disabled>Launch agent</button>
-        <div id="agentGrid"></div>
-      </div>
+    <aside class="left" aria-label="Input footage and observations">
+      <div class="sidebar-heading"><span class="eyebrow">01 / THE INPUT</span><h2>Your footage</h2></div>
+      <div class="source-card"><video id="player" controls muted playsinline preload="metadata"></video><p id="sourceCaption" class="source-caption">Upload a walk-around video, or try the house-and-patio sample.</p></div>
+      <section class="observations" aria-labelledby="observationsHeading"><div class="section-heading"><h3 id="observationsHeading">Detected features</h3><span id="featureCount" class="count">0</span></div><p class="section-help">Open a feature for details. Select a timestamp to see it in the video.</p><div id="chips"></div></section>
+      <details class="coverage" id="coveragePanel"><summary>Coverage & unknowns <span id="uncertainCount"></span></summary><div id="coverageContent"></div></details>
+      <details class="advanced"><summary>Additional tests <span aria-hidden="true">+</span></summary><div class="advanced-body"><h3>Try another wind</h3><p>Re-test the latest model. If the house ignites, the agent tries more fixes.</p><div class="row"><select id="judgeWind" aria-label="New wind direction"><option value="0">N</option><option value="45">NE</option><option value="90">E</option><option value="135">SE</option><option value="180">S</option><option value="225">SW</option><option value="270">W</option><option value="315">NW</option></select><button id="windTest" disabled>Test wind</button></div><h3 class="spaced">Test all wind directions</h3><p>A separate agent searches for fixes across 8 directions and 3 seeds. We check its plan locally.</p><button id="agent" disabled>Run extended test</button><div id="agentGrid"></div><button id="illustrative" class="text-button">Use illustrative property instead</button></div></details>
+      <p class="sidebar-caveat">A planning aid, not a certified assessment. A simulation is not a guarantee of real-world safety.</p>
+    </aside>
+    <section class="center" aria-label="Property model and simulation evidence">
+      <div class="workspace-heading"><div><span class="eyebrow">02 / THE EVIDENCE</span><h2>Your property</h2></div><span id="workspaceStatus" class="workspace-status">Illustrative preview</span></div>
+      <nav class="tabs" aria-label="Property views" role="tablist"><button id="nav-model" data-tab="model" class="on" role="tab" aria-selected="true" aria-controls="tab-model">3D model</button><button id="nav-fidelity" data-tab="fidelity" role="tab" aria-selected="false" aria-controls="tab-fidelity">Model checks <span id="fidelityCount" class="count">0</span></button><button id="nav-sims" data-tab="sims" role="tab" aria-selected="false" aria-controls="tab-sims">Ember tests</button><button id="nav-report" data-tab="report" role="tab" aria-selected="false" aria-controls="tab-report">Full report</button></nav>
+      <div id="tab-model" class="tab on" role="tabpanel" aria-labelledby="nav-model"><div class="viewbar"><label class="version-label">Scene<select id="version" aria-label="Scene version"><option>Illustrative property</option></select></label><button id="play"><span aria-hidden="true">▷</span> Play ember test</button></div><div id="viewport" aria-label="Interactive 3D model"><span class="viewer-badge">SIMPLIFIED PROPERTY MODEL</span><span class="viewer-hint">Drag to orbit · Scroll to zoom</span><div id="modelWaiting" class="model-waiting" hidden><strong>Getting to know this property</strong><span>The generated model will appear after the video survey.</span></div></div><div class="model-footer"><span id="simStatus">Illustrative property · not generated from footage</span><span class="zone-legend"><i></i> 5 ft zone</span></div><div id="testStrip" class="test-strip"></div></div>
+      <div id="tab-fidelity" class="tab" role="tabpanel" aria-labelledby="nav-fidelity" hidden><div class="tab-intro"><h2>Did the model match the footage?</h2><p>The agent compares the same viewpoints and corrects the scene. These are model corrections, separate from fire-safety fixes.</p></div><div id="fidelity" class="pad"></div></div>
+      <div id="tab-sims" class="tab" role="tabpanel" aria-labelledby="nav-sims" hidden><div class="tab-intro"><h2>What happened in the ember test?</h2><p id="simulationNote">Recorded tests will appear here. Any before/after comparison uses the same wind and random seed.</p></div><div id="sims" class="pad"></div></div>
+      <div id="tab-report" class="tab" role="tabpanel" aria-labelledby="nav-report" hidden><div id="report" class="pad report"></div></div>
     </section>
-
-    <section class="center">
-      <nav class="tabs">
-        <button data-tab="model" class="on">3D model</button>
-        <button data-tab="fidelity">Video vs model</button>
-        <button data-tab="sims">Before / after</button>
-        <button data-tab="report">Report</button>
-      </nav>
-      <div id="tab-model" class="tab on">
-        <div class="viewbar">
-          <select id="version"></select>
-          <button id="play">▶ Play ember storm</button>
-          <span id="simStatus" class="muted"></span>
-        </div>
-        <div id="viewport"></div>
-      </div>
-      <div id="tab-fidelity" class="tab"><div id="fidelity" class="pad muted">The fidelity loop compares real video frames with renders of the model.</div></div>
-      <div id="tab-sims" class="tab"><div id="sims" class="pad muted">Simulations will appear here.</div></div>
-      <div id="tab-report" class="tab"><div id="report" class="pad muted">The homeowner report appears when the pipeline finishes.</div></div>
-    </section>
-
-    <section class="right">
-      <h3>Argon log <span id="runId" class="muted"></span></h3>
-      <ol id="log"></ol>
-    </section>
+    <aside class="right" aria-label="Agent result, recommendations, and activity">
+      <div class="sidebar-heading right-heading"><div><span class="eyebrow">03 / THE TAKEAWAY</span><h2>Agent workspace</h2></div><span id="runStatus" class="status-label">Ready</span></div>
+      <div id="resultSummary"></div>
+      <section class="agent-activity"><div class="section-heading"><h3>What the agent did</h3><span id="runId" class="run-id"></span></div><ol id="log"></ol></section>
+      <section class="next-steps"><div class="section-heading"><h3>Suggested next steps</h3><span id="suggestionCount" class="count">0</span></div><p id="recommendationNote" class="section-help">Recommendations will appear when the assessment finishes.</p><div id="recommendations"></div></section>
+      <details id="appliedSection" class="applied-section" hidden><summary class="section-heading"><h3>Fixes tested in the model</h3><span id="appliedCount" class="count">0</span></summary><p class="section-help">These changes were applied to the digital model, not the physical property.</p><div id="appliedFixes"></div></details>
+    </aside>
   </main>
   <script type="module" src="/src/ui/main.js"></script>
 </body>

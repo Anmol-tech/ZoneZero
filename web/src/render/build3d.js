@@ -21,7 +21,7 @@ export function configureRenderer(renderer) {
   renderer.toneMappingExposure = 0.95;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.shadowMap.type = THREE.PCFShadowMap;
 }
 
 // Hip / gable / flat roof as one textured mesh (+ gable-end walls).
