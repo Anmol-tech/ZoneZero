@@ -36,6 +36,12 @@ export function createKit() {
     if (!list.includes(v)) { err(call, `${name}="${v}" must be one of ${list.join("|")}`); return false; }
     return true;
   };
+  const color = (v) => (typeof v === "string" && /^#[0-9a-fA-F]{6}$/.test(v) ? v : null);
+  // Walls that are mostly floor-to-ceiling glass on the ground floor (sliding doors, window walls).
+  const walls = (call, v) => {
+    const list = typeof v === "string" ? [v] : Array.isArray(v) ? v : [];
+    return list.filter((w) => oneOf(call, "glass", w, WALLS));
+  };
   const needHouse = (call) => {
     if (!spec.house) { err(call, "kit.house() must be called first"); return false; }
     return true;
@@ -44,7 +50,7 @@ export function createKit() {
 
   const kit = {
     house({ w = 40, d = 30, h = 12, roof = "asphalt", siding = "wood", stories, roofStyle = "hip", ridge = "x",
-            wainscot = "none", garage = null, porch = null, sidingColor = null, trimColor = null } = {}) {
+            wainscot = "none", garage = null, porch = null, sidingColor = null, trimColor = null, glass = [] } = {}) {
       if (spec.house) return err("house", "only one house allowed");
       num("house", "w", w, 15, 120); num("house", "d", d, 15, 120); num("house", "h", h, 8, 30);
       oneOf("house", "roof", roof, MATERIALS.roof); oneOf("house", "siding", siding, MATERIALS.siding);
@@ -54,16 +60,15 @@ export function createKit() {
       num("house", "stories", st, 1, 3);
       if (garage) { oneOf("house", "garage.wall", garage.wall, WALLS); num("house", "garage.x", garage.x ?? 0, -60, 60); num("house", "garage.width", garage.width ?? 16, 8, 40); }
       if (porch) { oneOf("house", "porch.wall", porch.wall, WALLS); num("house", "porch.x", porch.x ?? 0, -60, 60); num("house", "porch.w", porch.w ?? 10, 4, 60); num("house", "porch.d", porch.d ?? 6, 3, 15); }
-      const color = (v) => (typeof v === "string" && /^#[0-9a-fA-F]{6}$/.test(v) ? v : null);
       spec.house = { w, d, h, roof, siding, stories: st, roofStyle, ridge, wainscot, wings: [], chimneys: [],
         garage: garage ? { wall: garage.wall, x: garage.x ?? 0, width: garage.width ?? 16 } : null,
         porch: porch ? { wall: porch.wall, x: porch.x ?? 0, w: porch.w ?? 10, d: porch.d ?? 6 } : null,
-        sidingColor: color(sidingColor), trimColor: color(trimColor) };
+        sidingColor: color(sidingColor), trimColor: color(trimColor), glass: walls("house", glass) };
     },
     // An attached section that changes the footprint: L/T shapes, a forward garage, a bump-out.
     // It sticks out from `wall` of the main block, centered `offset` ft along that wall,
     // `w` ft wide along the wall and `d` ft deep away from it, with its own roof.
-    wing({ wall, offset = 0, w = 20, d = 20, h, roof, roofStyle = "gable", ridge, siding, stories, garage = null } = {}) {
+    wing({ wall, offset = 0, w = 20, d = 20, h, roof, roofStyle = "gable", ridge, siding, stories, garage = null, sidingColor = null, glass = [] } = {}) {
       if (!needHouse("wing")) return;
       const H = spec.house;
       if (H.wings.length >= 4) return err("wing", "at most 4 wings");
@@ -82,7 +87,8 @@ export function createKit() {
       const r = ridge ?? (along ? "z" : "x"); // default: a cross gable perpendicular to the main roof
       oneOf("wing", "ridge", r, ["x", "z"]);
       H.wings.push({ id: `w${H.wings.length + 1}`, wall, x: cx, z: cz, w: sx, d: sz, h: wh, roof: wr, siding: ws, roofStyle, ridge: r,
-        stories: stories ?? (wh >= 17 ? 2 : 1), garage: garage ? { wall: garage.wall, x: garage.x ?? 0, width: garage.width ?? 16 } : null });
+        stories: stories ?? (wh >= 17 ? 2 : 1), garage: garage ? { wall: garage.wall, x: garage.x ?? 0, width: garage.width ?? 16 } : null,
+        sidingColor: color(sidingColor), glass: walls("wing", glass) });
     },
     // A masonry or metal chimney (visual; spark arrestors are outside this model).
     chimney({ x = 0, z = 0, h } = {}) {

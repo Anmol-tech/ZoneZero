@@ -102,7 +102,7 @@ function bodyMeshes(b, seed) {
     }
     const wallMaterial = b.sidingOverride?.[wall] || b.siding;
     const wallColor = b.sidingOverride?.[wall] ? SIDING_COLORS[wallMaterial] : b.sidingColor;
-    faces[wall] = texMat(wallTexture({ len, h: b.h, material: wallMaterial, color: wallColor, trim, stories: b.stories || 1, wainscot: b.wainscot || "none", garage, door, seed: seed + wall.charCodeAt(0) }));
+    faces[wall] = texMat(wallTexture({ len, h: b.h, material: wallMaterial, color: wallColor, trim, stories: b.stories || 1, wainscot: b.wainscot || "none", garage, door, glass: Boolean(b.glass?.includes(wall)), seed: seed + wall.charCodeAt(0) }));
   }
   const plain = mat(b.sidingColor);
   const body = new THREE.Mesh(new THREE.BoxGeometry(b.w, b.h, b.d), [faces.E, faces.W, plain, plain, faces.S, faces.N]);
@@ -140,7 +140,7 @@ function houseMeshes(h, seed) {
   const doorWall = h.porch ? h.porch.wall : "N";
   const meshes = bodyMeshes({ ...h, trim, sidingColor, doorWall: h.door === false ? null : doorWall, doorX: h.porch ? h.porch.x : 0 }, seed);
   for (const wg of h.wings || []) {
-    const wingColor = wg.siding === h.siding ? sidingColor : SIDING_COLORS[wg.siding];
+    const wingColor = wg.sidingColor || (wg.siding === h.siding ? sidingColor : SIDING_COLORS[wg.siding]);
     // A gable wing whose ridge points away from the main block is a cross gable: carry its roof
     // back over the main block so it meets the main roof, as on a real front-gable bump-out.
     let roofRect = null;

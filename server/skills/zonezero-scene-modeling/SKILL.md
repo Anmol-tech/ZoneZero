@@ -64,7 +64,11 @@ aim (`lookAt`) at what the frame centers on. Bad cameras make the fidelity check
 - [ ] No plant, mulch or firewood on any paving; trees beside (not on) driveways/streets; island plants use a ring drive.
 - [ ] Every paving rectangle matches the paved area you see (no swallowed lawns or beds); pools modeled as pools.
 - [ ] Each hazard has a `// seen at m:ss` comment and the right material/condition.
-- [ ] Colors: siding, trim and every plant use hex colors sampled from the footage.
+- [ ] Colors: siding, trim, every differently colored wing and every plant use hex colors sampled from the footage.
+- [ ] Roof style per block matches the footage (flat for flat/low-slope modern roofs); glass walls marked with `glass`.
 
-`examples/forest_house.js` is a complete, validated model of a two-story craftsman with a forward garage — use it as the
-template for structure, comments and level of detail.
+Every element in your scene must come from what this video shows: the number of wings, gutters, neighbors, plants and
+cameras, the roof styles, and any chimney or porch.
+
+Modern / contemporary houses: flat or very low-slope roofs → roofStyle "flat"; volumes of a different color → that wing's
+sidingColor; walls of sliding doors or full-height windows → glass: [wall]. Only add a chimney or porch you actually see.

@@ -3,10 +3,11 @@ from pathlib import Path
 
 
 def load_skill(name: str) -> str:
-    """Concatenates a skill folder (SKILL.md, references/, examples/) into one instruction block."""
+    """Concatenates a skill folder (SKILL.md and references/) into one instruction block. examples/ stays on disk:
+    sent in full, Argon copied the example house's structure into every model and each call got slower."""
     root = Path(__file__).with_name("skills") / name
     parts = [(root / "SKILL.md").read_text()]
-    for sub in ("references", "examples"):
+    for sub in ("references",):
         for f in sorted((root / sub).glob("*")):
             parts.append(f"\n\n<<< {sub}/{f.name} >>>\n{f.read_text()}")
     return "".join(parts)
@@ -33,8 +34,11 @@ kit.house({ w, d, h, roof: "asphalt"|"wood_shake"|"tile"|"metal", siding: "wood"
             stories: 1|2|3, roofStyle: "hip"|"gable"|"flat", ridge: "x"|"z",          // ridge axis of a gable/hip roof
             wainscot: "none"|"stone"|"brick",                                          // masonry band at the base of the walls
             garage: { wall, x, width }, porch: { wall, x, w, d },                      // x = offset along that wall from its center
-            sidingColor: "#rrggbb", trimColor: "#rrggbb" })   // call first, once. w along x, d along z, h = wall height (eaves)
-kit.wing({ wall, offset, w, d, h, roof, roofStyle: "hip"|"gable"|"flat", ridge, siding, stories, garage: { wall, x, width } })
+            sidingColor: "#rrggbb", trimColor: "#rrggbb", glass: ["N"] })   // call first, once. w along x, d along z, h = wall height (eaves)
+kit.wing({ wall, offset, w, d, h, roof, roofStyle: "hip"|"gable"|"flat", ridge, siding, stories, garage: { wall, x, width },
+           sidingColor: "#rrggbb", glass: ["N","E"] })
+// glass = walls whose ground floor is mostly floor-to-ceiling glass (sliding doors, window walls); sidingColor = that block's
+// own color when it differs from the house (e.g. a red-brown panel volume on a white stucco house).
                                                               // an attached section sticking out of the main block's `wall`:
                                                               // w = width along that wall, d = depth away from it, own roof (<= 4 wings)
 kit.chimney({ x, z, h })                                      // masonry chimney; h = height above ground

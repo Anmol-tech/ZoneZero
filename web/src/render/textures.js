@@ -46,7 +46,7 @@ export const SIDING_COLORS = { wood: "#a47e57", stucco: "#e6dccb", fiber_cement:
 export const ROOF_COLORS = { asphalt: "#5b5e64", wood_shake: "#7d5a3c", tile: "#a8553b", metal: "#7f8a92" };
 
 // One wall face: lap siding or stucco, stone/brick base, windows per story, garage door, front door.
-export function wallTexture({ len, h, material, color, trim = "#f2f0ea", stories = 1, wainscot = "none", garage = null, door = null, seed = 1 }) {
+export function wallTexture({ len, h, material, color, trim = "#f2f0ea", stories = 1, wainscot = "none", garage = null, door = null, glass = false, seed = 1 }) {
   const key = JSON.stringify(arguments[0]);
   return tex(key, () => {
     const [c, ctx] = canvas(len * PX, h * PX);
@@ -70,7 +70,18 @@ export function wallTexture({ len, h, material, color, trim = "#f2f0ea", stories
     const sh = H / stories;
     for (let s = 1; s < stories; s++) { ctx.fillStyle = trim; ctx.fillRect(0, H - s * sh - 2, W, 4); }
     const blocked = (x0, x1) => (garage && x1 > garage.x0 && x0 < garage.x1) || (door && x1 > door.x0 - 6 && x0 < door.x1 + 6);
+    if (glass) {
+      // A ground-floor glass wall (sliding doors / window wall): framed panels across most of the wall.
+      const top = H - sh + sh * 0.08, gh = H - top, x0 = W * 0.06, gw = W * 0.88, n = Math.max(2, Math.round(len / 6));
+      ctx.fillStyle = trim; ctx.fillRect(x0 - 5, top - 5, gw + 10, gh + 5);
+      const g = ctx.createLinearGradient(0, top, 0, H);
+      g.addColorStop(0, "#7f95a8"); g.addColorStop(0.55, "#3b4c5c"); g.addColorStop(1, "#22303d");
+      ctx.fillStyle = g; ctx.fillRect(x0, top, gw, gh);
+      ctx.fillStyle = "rgba(255,255,255,0.12)"; for (let i = 0; i < n; i++) ctx.fillRect(x0 + (i + 0.15) * gw / n, top + 6, gw / n * 0.18, gh - 12);
+      ctx.fillStyle = trim; for (let i = 1; i < n; i++) ctx.fillRect(x0 + i * gw / n - 2, top, 4, gh);
+    }
     for (let s = 0; s < stories; s++) {
+      if (s === 0 && glass) continue;
       const n = Math.max(1, Math.floor(len / 11));
       for (let i = 0; i < n; i++) {
         const cx = ((i + 0.5) / n) * W, ww = 3.2 * PX, wh = 4.2 * PX;

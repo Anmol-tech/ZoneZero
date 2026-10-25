@@ -132,7 +132,7 @@ async def stage_generate(run: Run):
     reply, _ = await asyncio.to_thread(
         g.ask, [g.text(P.GENERATE.format(kit=P.KIT_DOC, conventions=P.CONVENTIONS, inventory=json.dumps(run.inventory, indent=1))),
                 g.video(run.path("video.mp4"), resolution="medium")],
-        system=P.SYSTEM_MODELING, thinking="high")
+        system=P.SYSTEM_MODELING, thinking="medium")
     spec, code = await compile_with_repair(run, g.extract_code(reply), "generate")
     v = run.add_spec(spec, "generated", code)
     await run.emit("generate", f"Model built: {len(spec['objects'])} objects, {len(spec['cameras'])} matched cameras", "done", version=v, lines=code.count("\n") + 1)
@@ -319,7 +319,7 @@ async def run_pipeline(run: Run, video_src: Path | None):
         run.state["status"] = "running"
         if video_src:
             video = run.path("video.mp4")
-            await run.emit("prepare", "Preparing video (480p)…", "running")
+            await run.emit("prepare", "Compressing video (720p, 15 fps)…", "running")
             await asyncio.to_thread(tools.prepare_video, video_src, video)
             run.state["video"] = run.url("video.mp4")
             run.state["video_duration"] = tools.video_duration(video)

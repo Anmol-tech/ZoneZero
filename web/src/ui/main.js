@@ -33,7 +33,7 @@ const FIX_LABELS = {
 };
 const fixLabel = (title, id) => FIX_LABELS[id || Object.keys(CATALOG).find((key) => CATALOG[key].title.toLowerCase().trim() === title?.toLowerCase().trim())] || title;
 let runId = null, state = null, eventSource = null, epoch = 0, loading = false;
-let events = new Map(), refreshTimer, refreshing = false, refreshAgain = false, currentTab = 'model';
+let events = new Map(), refreshTimer, refreshing = false, refreshAgain = false, currentTab = 'report';
 let versionKey = '', sceneRequest = 0;
 let extendedLaunching = 0, previousAgentId = null;
 let scenarioAgentId = null, scenarioSpec = null, selectedScenario = null, scenarioResult = null, previewScenario = null, scenarioToken = 0;
@@ -204,7 +204,7 @@ $('play').onclick = () => {
   $('play').innerHTML = '<span aria-hidden="true">↻</span> Restart preview';
 };
 function openTab(name) {
-  if (name === 'model') name = 'sims';
+  if (name === 'model') name = 'report';
   currentTab = name;
   document.querySelectorAll('[data-tab]').forEach((button) => { const active = button.dataset.tab === name; button.classList.toggle('on', active); button.setAttribute('aria-selected', String(active)); });
   document.querySelectorAll('.tab').forEach((panel) => { const active = panel.id === `tab-${name}`; panel.classList.toggle('on', active); panel.hidden = !active; });
@@ -364,26 +364,20 @@ function renderTakeaway(summary) {
   const freshness = reportFreshness(state);
   const top = (report?.fixes_ranked || []).slice(0, 3);
   const fmtT = (sec) => (sec === null ? 'None observed' : `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`);
+  // Slim result banner: one headline and at most two key pills. Details live in the Action plan.
   if (!state) {
-    paint('resultSummary', `<div class="band tone-neutral band-compact"><div class="band-main"><span class="band-label">Illustrative property</span><h1>Sample results — not an assessment of your home</h1><p class="band-scope">Click a numbered marker to see why it matters, or start an assessment with your own walkthrough.</p></div><div class="band-cta"><button class="primary" data-open-setup>New assessment</button></div></div>`);
+    paint('resultSummary', `<div class="band slim tone-neutral"><span class="band-dot"></span><div class="band-text"><h1>Illustrative property — sample results</h1></div><div class="band-pills"><button class="primary" data-open-setup>New assessment</button></div></div>`);
   } else if (!v) {
-    const events = [...(window.__zzEvents?.values?.() || [])];
-    const statuses = phaseStates(state, events);
-    const swNow = state.agent?.type === 'swarm' ? (state.agent.local_check?.grid?.length || 0) : null;
-    paint('resultSummary', `<div class="band tone-${state.status === 'error' ? 'danger' : 'neutral'}"><div class="band-main"><span class="band-label">${state.status === 'error' ? 'Needs attention' : 'Assessment in progress'}</span><h1>${esc(state.status === 'error' ? title : (PHASES[statuses.indexOf('active')]?.title || 'Starting') + '…')}</h1><p class="band-scope">Finished sections are usable below while the rest runs.${swNow !== null && state.agent.status !== 'completed' ? ` · ${swNow} of 24 scenarios verified` : ''}</p></div><ol class="stage-list">${PHASES.map((ph, i) => `<li class="${statuses[i]}"><span>${statuses[i] === 'complete' ? '✓' : i + 1}</span>${esc(ph.title)}</li>`).join('')}</ol></div>`);
+    const statuses = phaseStates(state, [...events.values()]);
+    const at = Math.max(0, statuses.indexOf('active'));
+    const swNow = state.agent?.type === 'swarm' && state.agent.status !== 'completed' ? (state.agent.local_check?.grid?.length || 0) : null;
+    const failed = state.status === 'error';
+    paint('resultSummary', `<div class="band slim tone-${failed ? 'danger' : 'neutral'}"><span class="band-dot ${failed ? '' : 'pulse'}"></span><div class="band-text"><h1>${esc(failed ? title : (PHASES[at]?.title || 'Starting') + '…')}</h1></div><div class="band-pills"><span class="pill-chip">Step ${at + 1} of ${PHASES.length}</span>${swNow !== null ? `<span class="pill-chip">${swNow}/24 scenarios verified</span>` : ''}</div><div class="band-progress" style="--p:${((at + (failed ? 0 : 0.5)) / PHASES.length).toFixed(2)}"></div></div>`);
   } else {
-    const metric = (label, value, sub, cls = '', extra = '') => `<div class="metric ${cls}"><span class="metric-label">${label}</span><strong class="metric-value">${value}</strong><span class="metric-sub">${sub}</span>${extra}</div>`;
-    const selected = facts.tested
-      ? metric('Selected test', `${fmtT(facts.baselineS)} → ${facts.finalS === null ? 'None' : fmtT(facts.finalS)}`, `Ignition at ${fmtT(facts.baselineS)} before → ${facts.finalS === null ? 'none observed' : fmtT(facts.finalS)} after changes · wind from ${direction(facts.wind)}`, facts.finalS === null ? 'good' : 'bad')
-      : metric('Selected test', fmtT(facts.baselineS), 'House ignition · no changes tested', facts.baselineS === null ? 'good' : 'bad');
-    const allWind = sw
-      ? metric('All-wind check', `${sw.noIgnition} / ${PLANNED_SCENARIOS}`, `without house ignition · ${sw.checked}/${PLANNED_SCENARIOS} verified`, !sw.complete ? 'muted' : sw.ignited === 0 ? 'good' : sw.noIgnition === 0 ? 'bad' : 'warn', '<button class="link" data-open-tab="sims">See all scenarios</button>')
-      : metric('All-wind check', 'Not run', 'Only one wind direction was tested', 'muted', '<button class="link" data-run-swarm>Run all-wind check</button>');
-    const nFix = new Set(applied.map((a) => a.fix)).size;
-    const changes = metric('Changes tested', `${nFix}`, nFix ? `${nFix === 1 ? 'change' : 'changes'} applied together in the model` : 'none applied yet');
-    const stale = freshness === 'stale' || freshness === 'legacy' ? `<p class="stale-note">${freshness === 'stale' ? 'This plan was prepared before the latest tests.' : 'This plan predates these checks.'} <button data-update-report>Update action plan</button></p>` : '';
-    const first = top.length ? `<div class="first-row"><span class="first-title">Do these first</span>${top.map((fix, i) => { const t = fixInTestedSet(fix, appliedIds, CATALOG); return `<button class="first-item" data-show-fix="${esc(fix.fix_id || '')}" data-title="${esc(fix.title)}" title="Show on model"><b>${i + 1}</b><span>${esc(fixLabel(fix.title, fix.fix_id))}</span><em class="cost">${esc(fix.cost)}</em><em class="${t ? 'tested' : 'untested'}">${t ? 'In tested set' : 'Suggested · Not tested'}</em></button>`; }).join('')}<button class="link" data-open-tab="report">Full action plan</button></div>` : '';
-    paint('resultSummary', `<div class="band tone-${v.tone}"><div class="band-main"><span class="band-label">Result</span><h1>${esc(v.title)}</h1><p class="band-scope">${esc(scopeLine(facts, direction).replace(/ · 90 s$/, ''))} · 90-second simulation</p>${stale}</div><div class="metrics">${selected}${allWind}${changes}</div>${first}</div>`);
+    const pill = (text, cls = '') => `<span class="pill-chip ${cls}">${text}</span>`;
+    const tested = facts.tested ? pill(`Tested wind: ${facts.finalS === null ? 'no ignition after changes' : `ignites at ${fmtT(facts.finalS)}`}`, facts.finalS === null ? 'good' : 'bad') : '';
+    const winds = sw ? pill(`${sw.noIgnition}/24 wind tests hold`, !sw.complete ? '' : sw.ignited === 0 ? 'good' : sw.noIgnition === 0 ? 'bad' : 'warn') : pill('Other winds not checked');
+    paint('resultSummary', `<div class="band slim tone-${v.tone}"><span class="band-dot"></span><div class="band-text"><h1>${esc(v.title)}</h1></div><div class="band-pills">${tested}${winds}<button class="link" data-open-tab="report">Action plan →</button></div></div>`);
   }
   document.querySelector('.next-steps').hidden = Boolean(top.length);
   document.body.classList.toggle('has-run', Boolean(state));
@@ -446,7 +440,7 @@ function renderEvidence(summary) {
   const { before, latest, applied } = summary;
   const rounds = state?.fix_rounds || [];
   const efacts = resultFacts(state);
-  $('simulationNote').textContent = (efacts?.hasBaseline ? scopeLine(efacts, direction) + '. ' : '') + (rounds.length || summary.pendingTests ? 'Recorded before/after comparisons use the same wind and random seed within each round.' : before ? state?.status === 'running' ? 'The baseline is recorded. The agent is evaluating the result and testing any required changes.' : 'Only the baseline model was tested. The suggestions in the report were not applied or re-tested.' : 'Recorded tests will appear here. Any before/after comparison uses the same wind and random seed.');
+  $('simulationNote').textContent = rounds.length ? 'Same wind and random seed before and after.' : before ? 'Original property only — no changes tested yet.' : 'Recorded tests appear here.';
   let simulations = before ? rounds.length ? rounds.map((round) => `<h3>${round.tag === 'wind' ? 'New wind' : 'Mitigation'} · round ${round.round} · wind from ${direction(round.wind)}</h3>${(round.plan?.fixes || []).some((fix) => fix.evidence_frame) ? `<div class="evrow">${round.plan.fixes.filter((fix) => fix.evidence_frame).map((fix) => `<figure><img src="${esc(fix.evidence_frame)}" data-seek="${esc(fix.seen_in_video_at)}" alt="Footage at ${esc(fix.seen_in_video_at)}" loading="lazy"><figcaption>Footage ${esc(fix.seen_in_video_at)} · ${esc(fixLabel(null, fix.fix))}<br><span>${esc(fix.evidence || '')}</span></figcaption></figure>`).join('')}</div>` : ''}<div class="ba"><div><h4>Original for this round ${pill(round.before)}</h4><video src="${esc(round.before_video)}" controls muted preload="metadata"></video>${chain(round.before)}</div><div><h4>After tested fixes ${pill(round.after)}</h4><video src="${esc(round.after_video)}" controls muted preload="metadata"></video>${chain(round.after)}<p>${round.verdict.sim_agrees ? 'The agent’s verification agrees with the simulator.' : 'The agent disagreed. This result uses the simulator’s recorded outcome.'}</p></div></div>`).join('') : `<div class="ba"><div><h4>Baseline simulation ${pill(before.result)}</h4><video src="${esc(before.video)}" controls muted preload="metadata"></video>${chain(before.result)}<p>${before.result.ignited.length} modeled objects ignited. ${before.result.houseIgnited ? 'The house also ignited.' : 'The house did not ignite.'}</p></div><div class="no-after"><strong>${state?.status === 'running' ? 'Assessment still in progress' : 'No “after” test was run'}</strong><p>${state?.status === 'running' ? 'The agent is evaluating the baseline and testing changes where needed. Follow its progress on the right.' : 'The agent did not apply mitigation fixes. Its report lists suggestions for you to consider; their effects have not been verified by a second simulation.'}</p></div></div>` : empty('The first recorded ember test will appear here.');
   if (summary.pendingTests) simulations += `<h3>Latest re-test · agent verification in progress</h3><div class="ba"><div><h4>Recorded result ${pill(latest.result)}</h4><video src="${esc(latest.video)}" controls muted preload="metadata"></video>${chain(latest.result)}</div><div class="no-after"><strong>The agent is checking this re-test</strong><p>Changes were applied to the model before this recording. The confirmed fix list and explanation will appear after verification.</p></div></div>`;
   paint('sims', simulations);
@@ -454,13 +448,26 @@ function renderEvidence(summary) {
   $('fidelityCount').textContent = state?.fidelity?.length || 0;
   paint('testStrip', latest ? `<p><strong>${state.sims.length} recorded test${state.sims.length === 1 ? '' : 's'}</strong> · Wind ${direction(latest.wind)}${latest.mph ? ` at ${latest.mph} mph` : ''}${latest.duration ? ` · ${latest.duration}s exposure` : ''}<br>${summary.pendingTests ? 'Changes were re-tested; verification is in progress.' : applied.length ? 'Model changes were applied and re-tested.' : state?.status === 'running' ? 'The agent is evaluating this result and any required changes.' : 'Suggestions have not been applied or re-tested.'}</p><button data-open-tab="sims">Watch evidence ↗</button>` : `<p>${state ? 'Preparing this property’s first recorded ember test.' : 'Start an assessment to generate a model from footage and record an ember test.'}</p>`);
   const report = state?.report;
-  const rfacts = resultFacts(state), rv = verdict(rfacts), fresh = reportFreshness(state);
+  // Action plan: the three numbers that matter, then ranked actions. Everything else is one tap away.
+  const rfacts = resultFacts(state), fresh = reportFreshness(state);
   const appliedIdsR = new Set(applied.map((item) => item.fix));
-  const setEffect = rfacts?.tested ? testedWindLine(rfacts, direction) : '';
-  const provenance = fresh === 'stale' ? '<p class="stale-note">This plan was written before newer tests ran. <button data-update-report>Update action plan</button></p>'
-    : fresh === 'legacy' ? '<p class="stale-note">Legacy plan: the tests it was prepared from were not recorded. <button data-update-report>Update action plan</button></p>'
-    : state?.report_scope ? `<p class="report-note">Prepared from scene v${esc(state.report_scope.spec_n)} · ${state.report_scope.sims} recorded tests · ${state.report_scope.swarm_checked ? `all-wind check ${state.report_scope.swarm_checked}/${PLANNED_SCENARIOS}` : 'no all-wind check'}.</p>` : '';
-  paint('report', report ? `<span class="eyebrow">HOMEOWNER ACTION PLAN</span><p class="scope-line">${esc(scopeLine(rfacts, direction))}</p><h2>${esc(rv ? rv.title : report.headline)}</h2>${setEffect ? `<p class="facts-line">${esc(setEffect)}</p>` : ''}${rfacts?.swarm ? `<p class="facts-line">All-wind check: ${rfacts.swarm.checked} of ${PLANNED_SCENARIOS} scenarios checked · house ignited in ${rfacts.swarm.ignited} · no house ignition in ${rfacts.swarm.noIgnition}${rfacts.swarm.complete ? '' : ' (incomplete)'}.</p>` : '<p class="facts-line">Other wind directions have not been checked.</p>'}${provenance}<p class="report-note">${esc(report.headline)}</p><p class="report-note">Cost bands ($ / $$ / $$$) are rough and relative, not quotes. Fixes marked “in the tested set” were applied together in the model; their combined effect is shown above, and no single fix's contribution was isolated.</p><h3>Recommendations, in priority order</h3><ol>${(report.fixes_ranked || []).map((fix) => { const t = fixInTestedSet(fix, appliedIdsR, CATALOG); return `<li><b>${esc(fix.title)}</b> <span class="pill neutral">${esc(fix.cost)}</span> <span class="pill ${t ? 'good' : 'neutral'}">${t ? 'In tested set' : 'Suggested · not tested'}</span><br>${esc(fix.why)}</li>`; }).join('')}</ol><h3>First 5 feet: checklist</h3><ul>${(report.zone0_checklist || []).map((item) => `<li>${esc(item)}</li>`).join('')}</ul><p>${esc(report.caveats)}</p>` : empty('The report appears here when the assessment is complete.'));
+  const mm = (sec) => (sec === null ? 'none' : `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`);
+  const stat = (label, value, sub, cls = '') => `<div class="plan-stat ${cls}"><span>${label}</span><strong>${value}</strong><small>${sub}</small></div>`;
+  const rsw = rfacts?.swarm;
+  const stats = rfacts?.hasBaseline ? `<div class="plan-stats">${
+    stat('Tested wind', rfacts.tested ? `${mm(rfacts.baselineS)} → ${mm(rfacts.finalS)}` : mm(rfacts.baselineS), rfacts.tested ? 'house ignition, before → after' : 'house ignition', rfacts.finalS === null ? 'good' : 'bad')}${
+    rsw ? stat('All winds', `${rsw.noIgnition}/24`, rsw.complete ? 'scenarios hold' : `${rsw.checked}/24 checked`, !rsw.complete ? '' : rsw.ignited === 0 ? 'good' : rsw.noIgnition === 0 ? 'bad' : 'warn') : stat('All winds', '—', 'not checked')}${
+    stat('Changes tested', `${new Set(applied.map((a) => a.fix)).size}`, 'applied together')}</div>` : '';
+  const stale = fresh === 'stale' || fresh === 'legacy' ? `<div class="plan-stale"><span>${fresh === 'stale' ? 'Newer tests ran after this plan.' : 'This plan predates the latest checks.'}</span><button data-update-report>Update plan</button></div>` : '';
+  const fixes = report?.fixes_ranked || [];
+  const row = (fix, i) => {
+    const t = fixInTestedSet(fix, appliedIdsR, CATALOG);
+    return `<li class="plan-item"><div class="plan-row"><b class="plan-rank">${i + 1}</b><div class="plan-what"><strong>${esc(fixLabel(fix.title, fix.fix_id))}</strong><span class="plan-tags"><em class="cost" title="Relative cost">${esc(fix.cost)}</em><em class="${t ? 'tested' : 'untested'}">${t ? 'Tested in model' : 'Not tested'}</em></span></div><button class="plan-show" data-show-fix="${esc(fix.fix_id || '')}" data-title="${esc(fix.title)}">Show</button></div>${fix.why ? `<details class="plan-why"><summary>Why</summary><p>${esc(fix.why)}</p></details>` : ''}</li>`;
+  };
+  const list = fixes.length ? `<h3 class="plan-h">Do these first</h3><ol class="plan-list">${fixes.slice(0, 5).map(row).join('')}</ol>${fixes.length > 5 ? `<details class="plan-more"><summary>${fixes.length - 5} more actions</summary><ol class="plan-list" start="6">${fixes.slice(5).map((f, i) => row(f, i + 5)).join('')}</ol></details>` : ''}` : '';
+  const checklist = (report?.zone0_checklist || []).length ? `<details class="plan-more"><summary>First 5 feet checklist · ${report.zone0_checklist.length}</summary><ul class="plan-check">${report.zone0_checklist.map((item) => `<li>${esc(item)}</li>`).join('')}</ul></details>` : '';
+  const prepared = state?.report_scope ? `<details class="plan-more"><summary>Prepared from</summary><p>Scene v${esc(state.report_scope.spec_n)} · ${state.report_scope.sims} recorded tests · ${state.report_scope.swarm_checked ? `all-wind check ${state.report_scope.swarm_checked}/24` : 'single wind only'}. Changes marked “tested in model” were applied together; individual effects were not isolated.</p></details>` : '';
+  paint('report', report ? `<div class="plan">${stats}${stale}${list}${checklist}${prepared}<p class="plan-foot">$ low · $$ medium · $$$ high relative cost · Planning aid, not a certified assessment.</p></div>` : empty('Your action plan appears when the assessment finishes.'));
 }
 function renderAgent() {
   const agent = state?.agent;
@@ -498,7 +505,7 @@ function renderAgent() {
   const DIR_NAMES = { 0: 'North', 45: 'Northeast', 90: 'East', 135: 'Southeast', 180: 'South', 225: 'Southwest', 270: 'West', 315: 'Northwest' };
   const cellLabel = (cell) => cell.verified ? (cell.outcome === 'no_ignition' ? ['✓', 'No ignition'] : ['🔥', `Ignition · ${cell.houseIgnitedAt}`])
     : cell.outcome === 'failed' ? ['✕', 'Failed to complete'] : cell.worker?.status === 'verifying' ? ['…', 'Awaiting verification'] : ['running', 'launching'].includes(cell.worker?.status) ? ['⟳', 'Running'] : ['–', 'Not run'];
-  paint('scenarioGrid', `<p class="matrix-summary"><strong>${extended.checked} / ${PLANNED_SCENARIOS} verified</strong> · <strong>${extended.holds} / ${PLANNED_SCENARIOS} without house ignition</strong></p><p class="matrix-note">This fraction describes the tested scenarios; it is not a real-world survival probability. Only locally verified outcomes are counted.</p><div class="matrix-scroll"><table class="scenario-matrix rows"><thead><tr><th scope="col">Wind from</th>${SEEDS.map((seed) => `<th scope="col">Trial ${seed}</th>`).join('')}<th scope="col">No ignition</th></tr></thead><tbody>${WINDS.map((wind) => {
+  paint('scenarioGrid', `<p class="matrix-summary"><strong>${extended.checked} / ${PLANNED_SCENARIOS} verified</strong> · <strong>${extended.holds} / ${PLANNED_SCENARIOS} without house ignition</strong></p><p class="matrix-note">Tested scenarios only — not a real-world survival probability. Click a cell to replay it on the model.</p><div class="matrix-scroll"><table class="scenario-matrix rows"><thead><tr><th scope="col">Wind from</th>${SEEDS.map((seed) => `<th scope="col">Trial ${seed}</th>`).join('')}<th scope="col">No ignition</th></tr></thead><tbody>${WINDS.map((wind) => {
     const cells = SEEDS.map((seed) => extended.cells.find((item) => item.seed === seed && item.wind === wind));
     const d = byDir.find((x) => x.wind === wind);
     return `<tr><th scope="row" title="Wind from ${DIR_NAMES[wind]}"><abbr title="${DIR_NAMES[wind]}">${direction(wind)}</abbr></th>${cells.map((cell) => {
@@ -548,7 +555,7 @@ function renderConsensus(extended) {
   const failing = extended.cells.filter((cell) => cell.verified && cell.outcome === 'ignited').length;
   paint('agentConsensus', !extended.checked ? '' : !ranked.length
     ? `<h3>What the agents recommend next</h3><p class="section-help">${failing ? 'No new catalog fixes were suggested.' : 'Nothing: the house held in every checked scenario.'}</p>`
-    : `<h3>Suggestions from scenario agents</h3><p class="section-help">Counted across agents for the scenarios that still ignite. How often a change is suggested is not evidence that it works — these are <strong>Suggested · Not tested</strong>.</p><ol class="consensus-list">${ranked.map((item) => `<li><span class="consensus-bar" style="--share:${(item.count / Math.max(1, failing)).toFixed(2)}"></span><strong>${esc(fixLabel(null, item.fix.fix))}</strong><small>${esc(String(item.fix.target))} · ${esc(CATALOG[item.fix.fix]?.cost || '')}</small><em>Suggested by ${item.count} agent${item.count === 1 ? '' : 's'} · ${[...item.winds].join(', ')} · Not tested</em></li>`).join('')}</ol>`);
+    : `<h3>Agents also suggest</h3><p class="section-help">Not tested · how often a change is suggested is not proof it works.</p><ol class="consensus-list">${ranked.map((item) => `<li><span class="consensus-bar" style="--share:${(item.count / Math.max(1, failing)).toFixed(2)}"></span><strong>${esc(fixLabel(null, item.fix.fix))}</strong><small>${esc(String(item.fix.target))} · ${esc(CATALOG[item.fix.fix]?.cost || '')}</small><em>Suggested by ${item.count} agent${item.count === 1 ? '' : 's'} · ${[...item.winds].join(', ')} · Not tested</em></li>`).join('')}</ol>`);
 }
 
 function renderScenarioPreviews() {
@@ -682,12 +689,12 @@ document.addEventListener('click', async (event) => {
 // "Do these first" → show where the change applies on the model.
 document.addEventListener('click', async (event) => {
   const item = event.target.closest('[data-show-fix]'); if (!item) return;
-  const fixId = item.dataset.showFix || Object.keys(CATALOG).find((k) => CATALOG[k].title === item.dataset.title);
+  const fixId = item.dataset.showFix || Object.keys(CATALOG).find((k) => CATALOG[k].title.toLowerCase().trim() === String(item.dataset.title || '').toLowerCase().trim());
   if (versionKind !== 'changes') await setVersion('changes');
   const ids = (spec?.fixed || []).filter((f) => f.fix === fixId).map((f) => f.id);
   const group = groups.find((g) => g.ids?.some((id) => ids.includes(id)));
   if (group) { openHazardCard(group); $('viewerShell').scrollIntoView({ block: 'center', behavior: 'smooth' }); }
-  else openTab('report');
+  else { item.textContent = 'Removed in model'; item.disabled = true; }
 });
 // Setup lives in a panel under the header: open by default when nothing is loaded.
 // Entry mode: intro + upload on the left, the shared 3D viewer as an illustrative preview on the right.

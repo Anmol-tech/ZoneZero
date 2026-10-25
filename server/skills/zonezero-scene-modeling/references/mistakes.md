@@ -18,3 +18,6 @@
 | Pool missing | blue rectangle in footage, lawn in render | `paving({ kind: "pool" })`. |
 | Bad cameras | renders show sky or the back of the house | Match height (drone 40–90 ft) and aim at the frame center. |
 | Missing colors | everything default green/gray | Add sidingColor, trimColor and plant color hex values from the footage. |
+| Copying the example house | Every model gets a chimney, porch, 3 wings and hip roofs | Model only what this video shows; the example is for detail level, not structure. |
+| Glass walls as small windows | A wall of sliding doors renders as two punched windows | `glass: ["N"]` on the house or wing with that wall. |
+| One color for every block | A red-brown panel volume renders as the house color | `sidingColor` on that wing. |
