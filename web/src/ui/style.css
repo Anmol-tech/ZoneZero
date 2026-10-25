@@ -746,3 +746,11 @@ main.layout { max-width: 1680px; grid-template-columns: 250px minmax(0, 1fr) 460
   .plan-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
   .plan-stat { padding: 8px; } .plan-stat strong { font-size: 15px; } .plan-stat small { display: none; } .plan-stat span { font-size: 10px; }
 }
+.viewer-badge:empty { display: none; }
+.band.slim { flex-wrap: wrap; row-gap: 8px; } .band.slim .band-text { flex: 1 1 340px; }
+.scenario-cell .cell-before { display: block; margin-top: 2px; font-size: 11px; font-weight: 500; color: var(--ink-2); white-space: nowrap; }
+.scenario-matrix th small { font-weight: 500; color: var(--ink-2); font-size: 11px; }
+.scenario-chip span { color: var(--ink-2); }
+.scenario-chip span.on { color: var(--ink); font-weight: 700; }
+.replay-pair { display: flex; gap: 8px; flex-wrap: wrap; }
+#viewport .scenario-chip { top: 60px; }

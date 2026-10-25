@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { createKit, validateSpec } from '../src/kit/spec.js';
 import assert from 'node:assert/strict';
 import { assessmentSummary, phaseStates } from '../src/ui/assessment.js';
 import { WINDS, SEEDS, extendedSummary, durationLabel } from '../src/ui/extended.js';
@@ -192,4 +193,22 @@ test('F05: a later same-wind test is part of the tested-wind result; other winds
   assert.equal(resultFacts(run).finalS, null);
   run.fix_rounds[1].wind = 270;
   assert.equal(resultFacts(run).finalS, 68);
+});
+
+test('furniture placed inside the walls is moved just outside instead of failing validation', () => {
+  const { kit, spec } = createKit();
+  kit.house({ w: 30, d: 20, h: 10 });
+  kit.object({ x: 2, z: -8, kind: 'patio_furniture', item: 'sofa' });
+  assert.deepEqual(validateSpec(spec).filter((e) => e.includes('footprint')), []);
+  const o = spec.objects.find((q) => q.kind === 'object');
+  assert.equal(o.z, -11.5);
+  assert.ok(spec.notes.some((n) => n.includes('sofa')));
+});
+
+test('the all-wind result carries the original-house count, so it reads before -> after', () => {
+  const run = swarmRun(24, 24);
+  assert.equal(resultFacts(run).swarm.baselineIgnited, null);
+  run.agent.baseline = { grid: Array.from({ length: 24 }, (_, i) => ({ houseIgnitedAt: i < 20 ? '0:55' : null })) };
+  assert.equal(resultFacts(run).swarm.baselineIgnited, 20);
+  assert.match(verdict(resultFacts(run)).title, /after changes$/);
 });

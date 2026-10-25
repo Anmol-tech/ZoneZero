@@ -48,7 +48,7 @@ phone / drone video
 ② GENERATE .......... gemini-4-argon · thinking high · writes scene.js with the Scene Kit
    │                   → validator (Node vm, kit-only) rejects bad scenes; errors go back to Argon
 ③ FIDELITY LOOP ..... render model from video viewpoints (headless Chromium)
-   │                   → Argon compares real frame vs render → patches → repeat (≤3 rounds, pass ≥ 8/10)
+   │                   → Argon compares real frame vs render → patches → repeat (≤2 rounds, pass ≥ 8/10)
 ④ SIMULATE .......... deterministic ember storm (seeded), recorded to video with an ignition log
 ⑤ MITIGATION LOOP ... Argon watches the recording → picks catalog fixes (citing video evidence)
    │                   → apply → re-simulate same wind + seed → Argon verifies (simulator is ground truth)

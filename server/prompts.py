@@ -53,7 +53,10 @@ kit.paving({ x, z, w, d, kind: "driveway"|"path"|"patio"|"street"|"pool", shape:
                                                               // ring = circular drive around an unpaved island (inner 0.1-0.9)
 kit.mulch({ x, z, w, d, material: "bark"|"gravel" })          // rectangle centered at x,z
 kit.firewood({ x, z })
-kit.object({ x, z, kind: "patio_furniture"|"trash_bin"|"propane_tank"|"car"|"doormat"|"planter", material: "wood"|"plastic"|"metal"|"fabric"|"wicker" })
+kit.object({ x, z, kind: "patio_furniture"|"trash_bin"|"propane_tank"|"car"|"doormat"|"planter", material: "wood"|"plastic"|"metal"|"fabric"|"wicker",
+             item: "chair"|"lounge_chair"|"sofa"|"table"|"coffee_table"|"dining_set"|"bench"|"grill"|"umbrella", rot: degrees, color: "#rrggbb" })
+// item (patio_furniture only) picks the 3D model: one object per piece you see (a dining_set is a table with 6 chairs).
+// rot turns it (0 = front faces +z/South, 180 = faces North); color = the frame/fabric color sampled from the footage.
 kit.camera({ id, pos: [x, y, z], lookAt: [x, y, z], videoTimestamp: "m:ss" })   // >= 4, matching real video moments (use the real camera height, e.g. 60+ ft for drone shots)
 kit.note("short text")                                        // optional assumptions
 Make it LOOK like the video: match stories, roof style and ridge direction, garage/porch placement, siding and plant colors,
@@ -69,8 +72,9 @@ Build an inventory of everything relevant to wildfire EMBER risk near the house:
 they hold leaves/needles), vents (attic, foundation/crawlspace, gable; screened or not), decks (material, open underside, debris),
 fences (material, does it touch the house), plants within ~30 ft (especially junipers / dense shrubs against walls), mulch,
 firewood, furniture, propane, vehicles, doormats, anything combustible within 5 ft of the walls.
-Be EXHAUSTIVE and specific: scrub the whole video, zoom into frames, list every gutter run, every visible vent, every plant bed and
-shrub near the walls, every fence segment, and the condition of each (clogged? touching? dense? dry?). Record the single BEST
+Be EXHAUSTIVE for ember hazards: every gutter run, every visible vent, every plant bed and shrub near the walls, every fence
+segment, and the condition of each (clogged? touching? dense? dry?). Keep everything else brief: list furniture as ONE entry per
+group (a seating area, a dining set, a grill), and skip decor, lights, cushions, pots far from the walls and anything that cannot burn. Record the single BEST
 timestamp where each item is clearly visible (seen_at[0]) - it will be shown to the homeowner as evidence.
 
 {conventions}
@@ -93,7 +97,7 @@ Return ONLY JSON:
   "camera_moments": [{{"timestamp": "m:ss", "camera_position_ft": [x, y, z], "looking_at_ft": [x, y, z], "shows": "..."}}],
   "uncertain": ["things you could not determine from the video"]
 }}
-Give 4-6 camera_moments spread across the video, each a clear view of a different side of the house."""
+Give exactly 4 camera_moments spread across the video, each a clear view of a different side of the house."""
 
 GENERATE = """Write scene.js: a 3D model of this property using ONLY the Scene Kit API below. It will be compared side by side
 with frames from the real video, then used to simulate an ember storm, so materials and what-touches-what matter more than looks.
@@ -105,7 +109,8 @@ Inventory from the video survey:
 {inventory}
 
 Rules: call kit.house first. Every object in the inventory must appear (be detailed: individual shrubs, each gutter, each vent,
-plant colors, neighbors, paving, forest edge). Put a `// seen at m:ss` comment above each hazard so it can be traced to the video. Put a kit.camera at each camera_moment
+plant colors, neighbors, paving, forest edge). Furniture is low detail: one kit.object per group (item "dining_set" for a
+table with chairs, "sofa" for a seating area), never one call per chair. Put a `// seen at m:ss` comment above each hazard so it can be traced to the video. Put a kit.camera at each camera_moment
 (id = short name, videoTimestamp exactly as given). Keep everything within 150 ft. Return ONLY one ```js code block."""
 
 FIX_SCENE = """Your scene.js failed validation. Fix it and return ONLY one ```js code block with the full corrected file.
@@ -122,7 +127,8 @@ same viewpoint. Compare them. Look for: missing or extra objects, wrong side of 
 (roof/siding/fence), fence touching vs not touching the house, plants against walls, deck size/side, gutter or vent placement,
 AND the overall look: house SHAPE (missing or wrong wings, garage projecting forward or not, L/T shape, lower sections), number of
 stories, roof style/ridge direction per block, gable ends, garage and porch position, siding/plant colors and sizes, neighbors,
-driveway/street, forest edge, and whether the camera framing matches. Ignore lighting and the low-poly style.
+driveway/street, forest edge, and whether the camera framing matches. Ignore lighting and the low-poly style, and ignore
+furniture style, count, orientation and color, decor, and small items that do not touch the walls: they do not change ember risk.
 Also fail anything physically impossible in the render: a tree or shrub on a driveway, street, path or pool; paving covering
 lawn, beds or a drive island; objects inside buildings; floating or overlapping objects.
 

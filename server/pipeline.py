@@ -14,7 +14,7 @@ import tools
 
 RUNS = tools.ROOT / "runs"
 SAMPLES = tools.ROOT / "samples"
-MAX_FIDELITY_ROUNDS = 3
+MAX_FIDELITY_ROUNDS = 2
 MAX_FIX_ROUNDS = 4
 CATALOG = json.loads(tools._node("catalog"))
 
@@ -106,7 +106,7 @@ async def sim_record(run: Run, spec_n: int, label: str, wind: int | None = None)
 
 async def stage_survey(run: Run, video: Path):
     await run.emit("survey", "Argon is watching the full walk-around video…", "running")
-    inv, _ = await asyncio.to_thread(g.ask_json, [g.text(P.SURVEY.format(conventions=P.CONVENTIONS)), g.video(video, resolution="high", agentic=True)], system=P.SYSTEM_MODELING, thinking="high")
+    inv, _ = await asyncio.to_thread(g.ask_json, [g.text(P.SURVEY.format(conventions=P.CONVENTIONS)), g.video(video, resolution="high", agentic=True)], system=P.SYSTEM_MODELING, thinking="medium")
     run.inventory = inv
     run.path("inventory.json").write_text(json.dumps(inv, indent=1))
     await run.emit("survey", inv.get("summary", "Inventory ready"), "done", inventory=inv)
@@ -280,6 +280,8 @@ def result_facts(run: Run) -> dict:
         checked = len(sw["local_check"]["grid"])
         facts["swarm"] = {"id": sw["id"], "checked": checked, "planned": 24, "no_ignition": sw["local_check"]["survives"],
                           "ignited": checked - sw["local_check"]["survives"], "complete": checked == 24}
+        if (sw.get("baseline") or {}).get("grid"):
+            facts["swarm"]["baseline_ignited"] = sw["baseline"]["ignited"]
     return facts
 
 
@@ -293,6 +295,9 @@ def facts_text(f: dict) -> str:
     if sw:
         lines.append(f"All-wind check: {sw['checked']} of {sw['planned']} scenarios checked; house ignited in {sw['ignited']}, "
                      f"no house ignition in {sw['no_ignition']}" + ("" if sw["complete"] else " (INCOMPLETE)") + ".")
+        if sw.get("baseline_ignited") is not None:
+            lines.append(f"The same 24 scenarios on the original house (before any change): house ignited in {sw['baseline_ignited']} of 24. "
+                         "The all-wind check above tests the house WITH the tested changes.")
     else:
         lines.append("Other wind directions were not checked.")
     return "\n".join(lines)

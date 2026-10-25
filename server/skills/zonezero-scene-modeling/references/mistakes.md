@@ -21,3 +21,5 @@
 | Copying the example house | Every model gets a chimney, porch, 3 wings and hip roofs | Model only what this video shows; the example is for detail level, not structure. |
 | Glass walls as small windows | A wall of sliding doors renders as two punched windows | `glass: ["N"]` on the house or wing with that wall. |
 | One color for every block | A red-brown panel volume renders as the house color | `sidingColor` on that wing. |
+| Furniture as anonymous boxes | Every patio piece renders as a lounge chair | Set `item` (sofa, dining_set, grill, umbrella…), `rot` to face how it faces in the video, and `color`. |
+| Loggia modeled as a wing | Furniture lands inside closed walls and is pushed out onto the lawn | A covered outdoor room (loggia, covered patio) is the house `porch` (open, on posts), never a wing; put its furniture under the porch. |

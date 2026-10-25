@@ -18,6 +18,7 @@ export const MATERIALS = {
   mulch: ["bark", "gravel"],
   objectKind: ["patio_furniture", "trash_bin", "propane_tank", "car", "doormat", "planter"],
   objectMaterial: ["wood", "plastic", "metal", "fabric", "wicker"],
+  furnitureItem: ["chair", "lounge_chair", "sofa", "table", "coffee_table", "dining_set", "bench", "grill", "umbrella"],
 };
 export const WALLS = ["N", "E", "S", "W"];
 
@@ -74,7 +75,8 @@ export function createKit() {
       if (H.wings.length >= 4) return err("wing", "at most 4 wings");
       oneOf("wing", "wall", wall, WALLS); num("wing", "offset", offset, -60, 60); num("wing", "w", w, 4, 80); num("wing", "d", d, 1.5, 60);
       const wh = h ?? Math.min(H.h, 10);
-      num("wing", "h", wh, 7, H.h + 4);
+      // A wing may be taller than the block passed to kit.house (e.g. a two-story section on a one-story base).
+      num("wing", "h", wh, 7, 40);
       // Masonry-faced sections are modeled as the house siding over a masonry base.
       const wr = roof ?? H.roof, ws = ["stone", "brick", "masonry"].includes(siding) ? H.siding : (siding ?? H.siding);
       oneOf("wing", "roof", wr, MATERIALS.roof); oneOf("wing", "siding", ws, MATERIALS.siding); oneOf("wing", "roofStyle", roofStyle, MATERIALS.roofStyle);
@@ -164,10 +166,12 @@ export function createKit() {
       num("firewood", "x", x, -150, 150); num("firewood", "z", z, -150, 150);
       return push("firewood", { x, z });
     },
-    object({ x, z, kind, material = "plastic" } = {}) {
-      num("object", "x", x, -150, 150); num("object", "z", z, -150, 150);
+    // item picks the 3D model for patio_furniture; rot turns it (degrees, 0 = front faces +z / South).
+    object({ x, z, kind, material = "plastic", item, rot = 0, color } = {}) {
+      num("object", "x", x, -150, 150); num("object", "z", z, -150, 150); num("object", "rot", rot, -360, 360);
       oneOf("object", "kind", kind, MATERIALS.objectKind); oneOf("object", "material", material, MATERIALS.objectMaterial);
-      return push("object", { x, z, objKind: kind, material });
+      if (item !== undefined) oneOf("object", "item", item, MATERIALS.furnitureItem);
+      return push("object", { x, z, objKind: kind, material, rot, ...(item ? { item } : {}), ...(color && /^#[0-9a-fA-F]{6}$/.test(color) ? { color } : {}) });
     },
     camera({ id: cid, pos, lookAt, videoTimestamp } = {}) {
       const v3 = (p) => Array.isArray(p) && p.length === 3 && p.every((q) => typeof q === "number" && Number.isFinite(q));
@@ -218,6 +222,19 @@ export function validateSpec(spec) {
   if (!spec.house) errors.push("no kit.house() call");
   if (spec.cameras.length < 4) errors.push(`need at least 4 kit.camera() calls matching video moments, got ${spec.cameras.length}`);
   if (spec.house) {
+    // A plant or object a little inside the walls is a placement slip, not a modeling error: move it just outside
+    // the nearest wall here instead of spending an Argon repair round on it.
+    for (const o of spec.objects) {
+      if (!["plant", "firewood", "object"].includes(o.kind)) continue;
+      for (let pass = 0; pass < 4; pass++) {
+        const r = houseRects(spec.house).find((q) => Math.abs(o.x - q.x) < q.w / 2 - 0.5 && Math.abs(o.z - q.z) < q.d / 2 - 0.5);
+        if (!r) break;
+        const exits = [[r.x - r.w / 2 - 1.5, o.z], [r.x + r.w / 2 + 1.5, o.z], [o.x, r.z - r.d / 2 - 1.5], [o.x, r.z + r.d / 2 + 1.5]];
+        const [nx, nz] = exits.sort((a, b) => Math.hypot(a[0] - o.x, a[1] - o.z) - Math.hypot(b[0] - o.x, b[1] - o.z))[0];
+        spec.notes.push(`Moved ${o.id} (${o.item || o.objKind || o.species || o.kind}) ${Math.hypot(nx - o.x, nz - o.z).toFixed(1)} ft out of the house footprint`);
+        o.x = Math.round(nx * 10) / 10; o.z = Math.round(nz * 10) / 10;
+      }
+    }
     for (const o of spec.objects) {
       if (["plant", "mulch", "firewood", "object"].includes(o.kind) && !o.forest && distToHouse(spec.house, o.x, o.z) > 150) errors.push(`${o.id} (${o.kind}) is >150 ft from the house`);
       if (["plant", "firewood", "object"].includes(o.kind) && houseRects(spec.house).some((r) => Math.abs(o.x - r.x) < r.w / 2 - 0.5 && Math.abs(o.z - r.z) < r.d / 2 - 0.5)) errors.push(`${o.id} (${o.kind}) is inside the house footprint (main block or a wing)`);
