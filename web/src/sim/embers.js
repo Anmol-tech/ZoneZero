@@ -3,6 +3,7 @@
 // sandbox search). Same spec + same options => same result.
 
 import { buildNodes } from "./nodes.js";
+import { houseRects } from "../kit/spec.js";
 
 export const DEFAULTS = { windFrom: 270, mph: 30, seed: 7, duration: 90, dt: 0.1, emberRate: 70 };
 
@@ -44,7 +45,8 @@ export class Sim {
     this.blow = w.blow; this.from = w.from; this.side = w.side;
     this.speed = this.opts.mph * 1.467; // ft/s
     const h = spec.house;
-    this.reach = Math.max(h.w, h.d) / 2 + 60;
+    this.rects = houseRects(h);
+    this.reach = Math.max(...this.rects.map((r) => Math.max(Math.abs(r.x) + r.w / 2, Math.abs(r.z) + r.d / 2))) + 60;
   }
 
   get done() { return this.t >= this.opts.duration - 1e-9; }
@@ -109,8 +111,8 @@ export class Sim {
           }
         }
       }
-      // The house body stops embers that did not lodge in a house node.
-      if (alive && Math.abs(e.x) < h.w / 2 && Math.abs(e.z) < h.d / 2 && e.y < h.h + 6) alive = false;
+      // The house body (main block and wings) stops embers that did not lodge in a house node.
+      if (alive) for (const r of this.rects) if (Math.abs(e.x - r.x) < r.w / 2 && Math.abs(e.z - r.z) < r.d / 2 && e.y < (r.h ?? h.h) + 6) { alive = false; break; }
       if (alive) keep.push(e);
     }
     this.embers = keep;

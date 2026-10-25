@@ -70,6 +70,24 @@ export function buildNodes(spec) {
       f: roof.f, trap: roof.trap, heat: 1.2, fuel: 600, critical: true });
   }
 
+  // Wings: their own siding (facing-wall overrides apply) and roof. Skip points buried in the main block.
+  for (const wg of h.wings || []) {
+    for (const wall of ["N", "E", "S", "W"]) {
+      for (const a of steps(wallLength(wg, wall), 8)) {
+        const [lx, lz] = wallPoint(wg, wall, a, 0.5);
+        const x = wg.x + lx, z = wg.z + lz;
+        if (Math.abs(x) < h.w / 2 - 0.5 && Math.abs(z) < h.d / 2 - 0.5) continue;
+        add({ obj: "house", label: `${wall} wing siding`, part: "siding", p: [x, wg.h / 2, z], r: 3,
+          f: SIDING[h.sidingOverride?.[wall] || wg.siding], trap: 0.004, heat: 1.2, fuel: 600, critical: true });
+      }
+    }
+    const wr = ROOF[wg.roof];
+    for (const x of steps(wg.w, 12)) for (const z of steps(wg.d, 12)) {
+      add({ obj: "house", label: `wing ${wg.roof.replace("_", " ")} roof`, part: "roof", p: [wg.x + x, wg.h + ROOF_RISE * 0.5, wg.z + z], r: 6,
+        f: wr.f, trap: wr.trap, heat: 1.2, fuel: 600, critical: true });
+    }
+  }
+
   for (const o of spec.objects) {
     switch (o.kind) {
       case "vent": {

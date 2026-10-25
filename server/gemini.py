@@ -61,8 +61,17 @@ def ask(parts: list, *, model: str = ARGON, thinking: str = "medium", system: st
         kwargs["system_instruction"] = system
     if previous:
         kwargs["previous_interaction_id"] = previous
-    it = client().interactions.create(**kwargs)
-    return it.output_text or "", it.id
+    # Long calls occasionally drop the connection; retry those (not API errors like bad input).
+    for attempt in range(3):
+        try:
+            it = client().interactions.create(**kwargs)
+            return it.output_text or "", it.id
+        except Exception as e:
+            transient = type(e).__name__ in ("APIConnectionError", "APITimeoutError", "RemoteProtocolError", "ReadTimeout", "ConnectError") \
+                or "disconnected" in str(e).lower() or "503" in str(e) or "UNAVAILABLE" in str(e)
+            if not transient or attempt == 2:
+                raise
+            time.sleep(3 * (attempt + 1))
 
 
 def parse_json(s: str):

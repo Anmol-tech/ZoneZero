@@ -81,6 +81,8 @@ export function wallTexture({ len, h, material, color, trim = "#f2f0ea", stories
         g.addColorStop(0, "#5d7186"); g.addColorStop(1, "#22303d");
         ctx.fillStyle = g; ctx.fillRect(cx - ww / 2, top, ww, wh);
         ctx.fillStyle = trim; ctx.fillRect(cx - 1.5, top, 3, wh); ctx.fillRect(cx - ww / 2, top + wh / 2 - 1.5, ww, 3);
+        ctx.fillStyle = trim; ctx.fillRect(cx - ww / 2 - 8, top + wh + 4, ww + 16, 5);   // sill
+        ctx.fillStyle = "rgba(0,0,0,0.25)"; ctx.fillRect(cx - ww / 2 - 8, top + wh + 9, ww + 16, 2);
       }
     }
     if (garage) {
@@ -152,6 +154,21 @@ export function boardsTexture(color, vertical = true) {
     }
     return c;
   }, true);
+}
+
+// Gable end: board-and-batten siding with a small attic window near the middle.
+export function gableTexture(color, trim = "#f1efe8") {
+  return tex(`gable:${color}`, () => {
+    const [c, ctx] = canvas(256, 128);
+    ctx.fillStyle = shade(color, 0.92); ctx.fillRect(0, 0, 256, 128);
+    for (let x = 0; x < 256; x += 10) { ctx.fillStyle = "rgba(0,0,0,0.22)"; ctx.fillRect(x, 0, 2, 128); ctx.fillStyle = "rgba(255,255,255,0.06)"; ctx.fillRect(x + 2, 0, 2, 128); }
+    ctx.fillStyle = trim; ctx.fillRect(110, 50, 36, 34);
+    const g = ctx.createLinearGradient(0, 54, 0, 80); g.addColorStop(0, "#5d7186"); g.addColorStop(1, "#22303d");
+    ctx.fillStyle = g; ctx.fillRect(114, 54, 28, 26);
+    ctx.fillStyle = trim; ctx.fillRect(127, 54, 2, 26);
+    ctx.fillStyle = trim; ctx.fillRect(0, 122, 256, 6);
+    return c;
+  });
 }
 
 // Fine metal mesh (vent screens, gutter guards).

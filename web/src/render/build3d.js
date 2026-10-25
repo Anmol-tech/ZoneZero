@@ -2,7 +2,7 @@
 import * as THREE from "three";
 import { wallPoint, wallLength } from "../sim/nodes.js";
 import { FireFX } from "./fire.js";
-import { wallTexture, roofTexture, groundTexture, boardsTexture, skyTexture, meshTexture, latticeTexture, SIDING_COLORS, hashStr, rng, shade } from "./textures.js";
+import { wallTexture, roofTexture, groundTexture, boardsTexture, skyTexture, meshTexture, latticeTexture, gableTexture, SIDING_COLORS, ROOF_COLORS, hashStr, rng, shade } from "./textures.js";
 
 const COLORS = {
   deck: { wood: "#8a5d36", composite: "#6f665c" }, fence: { wood: "#9b7048", metal: 0x3a3f44, masonry: 0xb0a594 },
@@ -25,6 +25,9 @@ export function configureRenderer(renderer) {
   renderer.shadowMap.type = THREE.PCFShadowMap;
 }
 
+// Gables are steeper (~8/12, craftsman) than hips (~6/12).
+const roofRise = (w, d, style) => (style === "gable" ? Math.min(15, Math.min(w, d) * 0.36) : Math.min(12, Math.min(w, d) * 0.28));
+
 // Hip / gable / flat roof as one textured mesh (+ gable-end walls).
 function roofMeshes(w, d, style, ridge, material, sidingMat, overhang = 1.5) {
   if (ridge === "z") {
@@ -33,7 +36,7 @@ function roofMeshes(w, d, style, ridge, material, sidingMat, overhang = 1.5) {
     return ms;
   }
   const W = w + overhang * 2, D = d + overhang * 2;
-  const rise = Math.min(12, Math.min(w, d) * 0.28);
+  const rise = roofRise(w, d, style);
   const roofMat = texMat(roofTexture(material), { side: THREE.DoubleSide, flatShading: true });
   if (style === "flat") {
     const g = new THREE.BoxGeometry(W, 1, D);
@@ -62,103 +65,203 @@ function roofMeshes(w, d, style, ridge, material, sidingMat, overhang = 1.5) {
   g.computeVertexNormals();
   const out = [new THREE.Mesh(g, roofMat)];
   if (style === "gable") {
-    // Triangular gable walls at each end, flush with the house walls.
-    const gp = [];
-    for (const sx of [-1, 1]) gp.push(sx * w / 2, 0, -d / 2, sx * w / 2, 0, d / 2, sx * w / 2, rise * (d / D), 0);
-    const gg = new THREE.BufferGeometry();
-    gg.setAttribute("position", new THREE.Float32BufferAttribute(gp, 3));
-    gg.computeVertexNormals();
-    const gm = sidingMat.clone(); gm.side = THREE.DoubleSide;
-    out.push(new THREE.Mesh(gg, gm));
+    // Triangular gable walls at each end, wound to face outward, with board siding and a small window.
+    const top = rise * (d / D);
+    for (const sx of [-1, 1]) {
+      const a = [sx * w / 2, 0, -d / 2], b = [sx * w / 2, top, 0], c = [sx * w / 2, 0, d / 2];
+      const verts = sx > 0 ? [a, b, c] : [a, c, b];
+      const gg = new THREE.BufferGeometry();
+      gg.setAttribute("position", new THREE.Float32BufferAttribute(verts.flat(), 3));
+      gg.setAttribute("uv", new THREE.Float32BufferAttribute(verts.flatMap((v) => [(v[2] + d / 2) / d, v[1] / top]), 2));
+      gg.computeVertexNormals();
+      out.push(new THREE.Mesh(gg, texMat(gableTexture(sidingMat.color.getStyle ? `#${sidingMat.color.getHexString()}` : "#8a8a80"))));
+    }
   }
   return out;
 }
 
-// A house body (ours or a neighbor's). Returns meshes positioned around (0,0).
-function houseMeshes(h, seed) {
-  const sidingColor = h.sidingColor || SIDING_COLORS[h.siding];
-  const trim = h.trimColor || "#f1efe8";
+// One rectangular building volume: textured walls (windows, doors, garage),
+// its roof, fascia, ridge cap and corner downspouts. Centered on (0,0).
+function bodyMeshes(b, seed) {
+  const trim = b.trim;
   const meshes = [];
-  const faces = { E: null, W: null, S: null, N: null };
-  const toTex = (wall, a) => (wall === "E" || wall === "N" ? wallLength(h, wall) / 2 - a : wallLength(h, wall) / 2 + a) * 12;
+  const faces = {};
+  const toTex = (wall, a) => (wall === "E" || wall === "N" ? wallLength(b, wall) / 2 - a : wallLength(b, wall) / 2 + a) * 12;
   for (const wall of ["E", "W", "S", "N"]) {
-    const len = wallLength(h, wall);
+    const len = wallLength(b, wall);
     let garage = null, door = null;
-    if (h.garage && h.garage.wall === wall) {
-      const x0 = toTex(wall, h.garage.x - h.garage.width / 2), x1 = toTex(wall, h.garage.x + h.garage.width / 2);
+    if (b.garage && b.garage.wall === wall) {
+      const x0 = toTex(wall, b.garage.x - b.garage.width / 2), x1 = toTex(wall, b.garage.x + b.garage.width / 2);
       garage = { x0: Math.min(x0, x1), x1: Math.max(x0, x1) };
     }
-    const doorWall = h.porch ? h.porch.wall : "N";
-    if (wall === doorWall && h.door !== false) {
-      let dx = h.porch ? h.porch.x : 0;
-      if (h.garage && h.garage.wall === wall && Math.abs(dx - h.garage.x) < h.garage.width / 2 + 3) dx = h.garage.x + (h.garage.x > 0 ? -1 : 1) * (h.garage.width / 2 + 5);
+    if (b.doorWall === wall) {
+      let dx = b.doorX;
+      if (b.garage && b.garage.wall === wall && Math.abs(dx - b.garage.x) < b.garage.width / 2 + 3) dx = b.garage.x + (b.garage.x > 0 ? -1 : 1) * (b.garage.width / 2 + 5);
       const x0 = toTex(wall, dx - 1.75), x1 = toTex(wall, dx + 1.75);
       door = { x0: Math.min(x0, x1), x1: Math.max(x0, x1) };
     }
-    const wallMaterial = h.sidingOverride?.[wall] || h.siding;
-    const wallColor = h.sidingOverride?.[wall] ? SIDING_COLORS[wallMaterial] : sidingColor;
-    faces[wall] = texMat(wallTexture({ len, h: h.h, material: wallMaterial, color: wallColor, trim, stories: h.stories || 1, wainscot: h.wainscot || "none", garage, door, seed: seed + wall.charCodeAt(0) }));
+    const wallMaterial = b.sidingOverride?.[wall] || b.siding;
+    const wallColor = b.sidingOverride?.[wall] ? SIDING_COLORS[wallMaterial] : b.sidingColor;
+    faces[wall] = texMat(wallTexture({ len, h: b.h, material: wallMaterial, color: wallColor, trim, stories: b.stories || 1, wainscot: b.wainscot || "none", garage, door, seed: seed + wall.charCodeAt(0) }));
   }
-  const plain = mat(sidingColor);
-  const body = new THREE.Mesh(new THREE.BoxGeometry(h.w, h.h, h.d), [faces.E, faces.W, plain, plain, faces.S, faces.N]);
-  body.position.y = h.h / 2; body.castShadow = body.receiveShadow = true;
+  const plain = mat(b.sidingColor);
+  const body = new THREE.Mesh(new THREE.BoxGeometry(b.w, b.h, b.d), [faces.E, faces.W, plain, plain, faces.S, faces.N]);
+  body.position.y = b.h / 2; body.castShadow = body.receiveShadow = true;
   meshes.push(body);
-  for (const r of roofMeshes(h.w, h.d, h.roofStyle || "hip", h.ridge || (h.w >= h.d ? "x" : "z"), h.roof, plain)) {
-    r.position.y = h.h; r.castShadow = true; r.receiveShadow = true; meshes.push(r);
+  const ridge = b.ridge || (b.w >= b.d ? "x" : "z");
+  // The roof may be larger than the walls (a cross gable running back into the main roof).
+  const rr = b.roofRect || { w: b.w, d: b.d, x: 0, z: 0 };
+  for (const r of roofMeshes(rr.w, rr.d, b.roofStyle || "hip", ridge, b.roof, plain)) {
+    r.position.set(rr.x, b.h, rr.z); r.castShadow = true; r.receiveShadow = true; meshes.push(r);
   }
-  // Fascia band under the eaves.
-  const fascia = new THREE.Mesh(new THREE.BoxGeometry(h.w + 3, 0.7, h.d + 3), mat(trim));
-  fascia.position.y = h.h - 0.1; meshes.push(fascia);
+  const fascia = new THREE.Mesh(new THREE.BoxGeometry(b.w + 3, 0.7, b.d + 3), mat(trim));
+  fascia.position.y = b.h - 0.1; meshes.push(fascia);
+  if (b.roofStyle !== "flat") {
+    // Ridge cap along the top of the roof.
+    const rise = roofRise(rr.w, rr.d, b.roofStyle);
+    const long = ridge === "x" ? rr.w : rr.d, short = ridge === "x" ? rr.d : rr.w;
+    const capLen = b.roofStyle === "gable" ? long + 3 : Math.max(0.5, long - short);
+    const cap = new THREE.Mesh(new THREE.BoxGeometry(ridge === "x" ? capLen : 0.9, 0.45, ridge === "x" ? 0.9 : capLen), mat(shade(ROOF_COLORS[b.roof] || "#555", 0.7)));
+    cap.position.set(rr.x, b.h + rise + 0.1, rr.z); meshes.push(cap);
+  }
+  // Downspouts at the corners.
+  const dsMat = mat(0xe8e6e0, { roughness: 0.5 });
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    const ds = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, b.h, 6), dsMat);
+    ds.position.set(sx * (b.w / 2 + 0.3), b.h / 2, sz * (b.d / 2 + 0.3)); meshes.push(ds);
+  }
+  return meshes;
+}
+
+// A whole house (ours or a neighbor's): main block, wings, chimneys and porch.
+function houseMeshes(h, seed) {
+  const trim = h.trimColor || "#f1efe8";
+  const sidingColor = h.sidingColor || SIDING_COLORS[h.siding];
+  const doorWall = h.porch ? h.porch.wall : "N";
+  const meshes = bodyMeshes({ ...h, trim, sidingColor, doorWall: h.door === false ? null : doorWall, doorX: h.porch ? h.porch.x : 0 }, seed);
+  for (const wg of h.wings || []) {
+    const wingColor = wg.siding === h.siding ? sidingColor : SIDING_COLORS[wg.siding];
+    // A gable wing whose ridge points away from the main block is a cross gable: carry its roof
+    // back over the main block so it meets the main roof, as on a real front-gable bump-out.
+    let roofRect = null;
+    const perpendicular = (wg.wall === "N" || wg.wall === "S") ? wg.ridge === "z" : wg.ridge === "x";
+    if (wg.roofStyle === "gable" && perpendicular) {
+      const span = wg.wall === "N" || wg.wall === "S" ? wg.w : wg.d;
+      const ext = Math.min(span * 0.75, (wg.wall === "N" || wg.wall === "S" ? h.d : h.w) / 2);
+      const dir = { N: [0, 1], S: [0, -1], E: [-1, 0], W: [1, 0] }[wg.wall];
+      // Wing sizes are absolute: w along x, d along z.
+      roofRect = wg.wall === "N" || wg.wall === "S"
+        ? { w: wg.w, d: wg.d + ext, x: 0, z: dir[1] * ext / 2 }
+        : { w: wg.w + ext, d: wg.d, x: dir[0] * ext / 2, z: 0 };
+    }
+    for (const m of bodyMeshes({ ...wg, trim, sidingColor: wingColor, wainscot: h.wainscot, sidingOverride: h.sidingOverride, doorWall: null, roofRect }, seed + 31)) {
+      m.position.x += wg.x; m.position.z += wg.z; meshes.push(m);
+    }
+  }
+  for (const c of h.chimneys || []) {
+    const ch = new THREE.Mesh(new THREE.BoxGeometry(3.2, c.h, 3.2), texMat(wallTexture({ len: 3.2, h: c.h, material: "stucco", color: "#8a7f74", trim: "#6f6559", stories: 1, wainscot: "brick", seed: 5 })));
+    ch.position.set(c.x, c.h / 2, c.z); ch.castShadow = true; meshes.push(ch);
+    const crown = new THREE.Mesh(new THREE.BoxGeometry(3.8, 0.5, 3.8), mat(0x5d5650)); crown.position.set(c.x, c.h + 0.25, c.z); meshes.push(crown);
+  }
   if (h.porch) {
     const p = h.porch;
     const [x, z] = wallPoint(h, p.wall, p.x, p.d / 2);
     const g = new THREE.Group();
-    const slab = new THREE.Mesh(new THREE.BoxGeometry(p.w, 0.6, p.d), mat(0xb5aea3)); slab.position.y = 0.3; g.add(slab);
-    const roof = new THREE.Mesh(new THREE.BoxGeometry(p.w + 1, 0.6, p.d + 1), texMat(roofTexture(h.roof))); roof.position.y = 9.2; roof.castShadow = true; g.add(roof);
-    for (const sx of [-1, 1]) { const post = new THREE.Mesh(new THREE.BoxGeometry(0.7, 9, 0.7), mat(trim)); post.position.set(sx * (p.w / 2 - 0.5), 4.5, p.d / 2 - 0.5); g.add(post); }
+    const slab = new THREE.Mesh(new THREE.BoxGeometry(p.w, 0.8, p.d), mat(0xb5aea3)); slab.position.y = 0.4; g.add(slab);
+    for (let i = 0; i < 2; i++) { const step = new THREE.Mesh(new THREE.BoxGeometry(Math.min(6, p.w), 0.4, 1.2), mat(0xa8a196)); step.position.set(0, 0.2 + i * 0.2 - 0.2 * i, p.d / 2 + 0.6 + (1 - i) * 1.1); step.scale.y = 1 - i * 0.5; g.add(step); }
+    const roof = new THREE.Mesh(new THREE.BoxGeometry(p.w + 1.5, 0.6, p.d + 1.5), texMat(roofTexture(h.roof))); roof.position.y = 9.4; roof.castShadow = true; g.add(roof);
+    const beam = new THREE.Mesh(new THREE.BoxGeometry(p.w + 1, 0.8, 0.6), mat(trim)); beam.position.set(0, 8.7, p.d / 2 - 0.4); g.add(beam);
+    for (const sx of [-1, 1]) {
+      const base = new THREE.Mesh(new THREE.BoxGeometry(1.4, 3, 1.4), h.wainscot !== "none" ? mat(0x8c8579) : mat(trim)); base.position.set(sx * (p.w / 2 - 0.7), 2.3, p.d / 2 - 0.7); g.add(base);
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.8, 5.6, 0.8), mat(trim)); post.position.set(sx * (p.w / 2 - 0.7), 6.6, p.d / 2 - 0.7); g.add(post);
+    }
+    const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.8, 0.3), mat(0x222222, { emissive: new THREE.Color(0x553311) })); lamp.position.set(2.4, 6.5, -p.d / 2 + 0.2); g.add(lamp);
     g.position.set(x, 0, z); g.rotation.y = wallRot[p.wall];
     meshes.push(g);
   }
   return meshes;
 }
 
-function conifer(o, color) {
+// Conifer: tiers of slightly irregular, two-tone cones on a visible trunk.
+function conifer(o, color, r) {
   const g = new THREE.Group();
-  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.9, o.height * 0.35, 6), mat(COLORS.trunk));
-  trunk.position.y = o.height * 0.175; g.add(trunk);
-  const r = Math.max(2.5, o.height / (o.limbed ? 7.5 : 5.5));
-  const start = o.limbed ? 0.4 : 0.15;
-  for (let i = 0; i < 4; i++) {
-    const t = i / 4, ch = (o.height * (1 - start)) / 2.2;
-    const cone = new THREE.Mesh(new THREE.ConeGeometry(r * (1 - t * 0.55), ch, 8), mat(color, { flatShading: true }));
-    cone.position.y = o.height * start + (o.height * (1 - start) - ch) * t + ch / 2;
+  const H = o.height;
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.35, H / 45 + 0.6, H * 0.45, 7), mat(COLORS.trunk));
+  trunk.position.y = H * 0.225; trunk.castShadow = true; g.add(trunk);
+  const base = Math.max(2.5, H / (o.limbed ? 7.5 : 5.2));
+  const start = o.limbed ? 0.42 : 0.14;
+  const tiers = Math.max(4, Math.min(8, Math.round(H / 9)));
+  for (let i = 0; i < tiers; i++) {
+    const t = i / tiers, ch = (H * (1 - start) / tiers) * 1.9;
+    const geo = new THREE.ConeGeometry(base * (1 - t * 0.78) * (0.9 + r() * 0.2), ch, 9, 1);
+    // Ragged edge: push alternate rim vertices in and out.
+    const pos = geo.attributes.position;
+    for (let k = 0; k < pos.count; k++) if (pos.getY(k) < 0) { const f = 0.82 + r() * 0.3; pos.setX(k, pos.getX(k) * f); pos.setZ(k, pos.getZ(k) * f); pos.setY(k, pos.getY(k) - r() * ch * 0.08); }
+    geo.computeVertexNormals();
+    const cone = new THREE.Mesh(geo, mat(shade(color, i % 2 ? 1.12 : 0.92), { flatShading: true }));
+    cone.position.y = H * start + (H * (1 - start)) * t + ch / 2 - ch * 0.15;
+    cone.rotation.y = r() * Math.PI;
     cone.castShadow = true; g.add(cone);
   }
   return g;
 }
 
+// Broadleaf tree: tapered trunk, a few limbs, and a crown of overlapping leaf clusters.
 function broadleaf(o, color, r) {
   const g = new THREE.Group();
-  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.8, o.height * (o.limbed ? 0.6 : 0.45), 6), mat(COLORS.trunk));
-  trunk.position.y = o.height * (o.limbed ? 0.3 : 0.225); g.add(trunk);
-  const cr = Math.max(2.5, o.height / 3.2) * (o.limbed ? 0.7 : 1);
-  for (let i = 0; i < 5; i++) {
-    const s = new THREE.Mesh(new THREE.IcosahedronGeometry(cr * (0.55 + r() * 0.3), 1), mat(shade(color, 0.85 + r() * 0.3), { flatShading: true }));
-    s.position.set((r() - 0.5) * cr, o.height * 0.62 + (r() - 0.3) * cr * 0.6, (r() - 0.5) * cr);
+  const H = o.height, trunkH = H * (o.limbed ? 0.55 : 0.42);
+  const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.35, H / 40 + 0.5, trunkH, 7), mat(COLORS.trunk));
+  trunk.position.y = trunkH / 2; trunk.castShadow = true; g.add(trunk);
+  const cr = Math.max(2.5, H / 3.4) * (o.limbed ? 0.72 : 1);
+  const cy = trunkH + cr * 0.75;
+  for (let i = 0; i < 3; i++) {
+    const a = (i / 3) * Math.PI * 2 + r();
+    const limb = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.32, cr * 0.9, 5), mat(COLORS.trunk));
+    limb.position.set(Math.cos(a) * cr * 0.25, trunkH + cr * 0.25, Math.sin(a) * cr * 0.25);
+    limb.rotation.set(Math.sin(a) * 0.7, 0, -Math.cos(a) * 0.7); g.add(limb);
+  }
+  const core = new THREE.Mesh(new THREE.IcosahedronGeometry(cr * 0.75, 1), mat(shade(color, 0.7), { flatShading: true }));
+  core.position.y = cy; core.scale.y = 0.8; core.castShadow = true; g.add(core);
+  const n = 9 + Math.round(r() * 4);
+  for (let i = 0; i < n; i++) {
+    const th = r() * Math.PI * 2, ph = Math.acos(1 - r() * 1.4);
+    const rad = cr * (0.32 + r() * 0.22);
+    const s = new THREE.Mesh(new THREE.IcosahedronGeometry(rad, 1), mat(shade(color, 0.85 + r() * 0.35), { flatShading: true }));
+    s.position.set(Math.sin(ph) * Math.cos(th) * cr * 0.75, cy + Math.cos(ph) * cr * 0.55, Math.sin(ph) * Math.sin(th) * cr * 0.75);
     s.castShadow = true; g.add(s);
   }
   return g;
 }
 
-function bush(o, color, r, cone = false) {
+// Shrubs: a mound of lumps; junipers: upright dense columns; grasses: fanned blades.
+function bush(o, color, r, kind) {
   const g = new THREE.Group();
-  const n = cone ? 2 : 3;
+  if (kind === "grass") {
+    for (let i = 0; i < 14; i++) {
+      const blade = new THREE.Mesh(new THREE.ConeGeometry(0.12, o.height * (0.7 + r() * 0.5), 3), mat(shade(color, 0.8 + r() * 0.4)));
+      const a = r() * Math.PI * 2, lean = 0.15 + r() * 0.35;
+      blade.position.set(Math.cos(a) * 0.4, o.height * 0.4, Math.sin(a) * 0.4);
+      blade.rotation.set(Math.sin(a) * lean, 0, -Math.cos(a) * lean); g.add(blade);
+    }
+    return g;
+  }
+  if (kind === "juniper") {
+    for (let i = 0; i < 3; i++) {
+      const rad = Math.max(0.7, o.height / 4) * (0.8 + r() * 0.3);
+      const m = new THREE.Mesh(new THREE.IcosahedronGeometry(rad, 1), mat(shade(color, 0.85 + r() * 0.3), { flatShading: true }));
+      m.scale.y = (o.height / (rad * 2)) * (0.8 + r() * 0.3);
+      m.position.set((r() - 0.5) * rad, o.height / 2, (r() - 0.5) * rad); m.castShadow = true; g.add(m);
+    }
+    return g;
+  }
+  const n = 5 + Math.round(r() * 2);
+  const R = Math.max(0.9, o.height / 2);
   for (let i = 0; i < n; i++) {
-    const rad = Math.max(0.8, o.height / 2) * (0.7 + r() * 0.4);
-    const m = cone ? new THREE.Mesh(new THREE.ConeGeometry(rad, o.height * (0.8 + r() * 0.3), 7), mat(color, { flatShading: true }))
-      : new THREE.Mesh(new THREE.IcosahedronGeometry(rad, 1), mat(shade(color, 0.85 + r() * 0.3), { flatShading: true }));
-    m.position.set((r() - 0.5) * rad, cone ? o.height / 2 : rad * 0.8, (r() - 0.5) * rad);
-    m.castShadow = true; g.add(m);
+    const rad = R * (0.45 + r() * 0.35);
+    const m = new THREE.Mesh(new THREE.IcosahedronGeometry(rad, 1), mat(shade(color, 0.8 + r() * 0.4), { flatShading: true }));
+    const a = r() * Math.PI * 2, d = r() * R * 0.6;
+    m.position.set(Math.cos(a) * d, rad * 0.75 + r() * R * 0.4, Math.sin(a) * d);
+    m.scale.y = 0.8; m.castShadow = true; g.add(m);
   }
   return g;
 }
@@ -297,7 +400,7 @@ export function buildScene(spec) {
       }
       case "plant": {
         const color = o.color || (o.species === "conifer" ? CONIFER[hashStr(o.id) % CONIFER.length] : o.species === "juniper" ? "#2c4f3b" : o.species === "grass" ? "#9d9a5a" : GREENS[hashStr(o.id) % GREENS.length]);
-        const m = o.species === "conifer" ? conifer(o, color) : o.species === "tree" ? broadleaf(o, color, r) : bush(o, color, r, o.species === "juniper" || o.species === "grass");
+        const m = o.species === "conifer" ? conifer(o, color, r) : o.species === "tree" ? broadleaf(o, color, r) : bush(o, color, r, o.species);
         m.position.set(o.x, 0, o.z); reg(o.id, m);
         break;
       }

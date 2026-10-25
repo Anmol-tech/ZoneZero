@@ -18,6 +18,10 @@ kit.house({ w, d, h, roof: "asphalt"|"wood_shake"|"tile"|"metal", siding: "wood"
             wainscot: "none"|"stone"|"brick",                                          // masonry band at the base of the walls
             garage: { wall, x, width }, porch: { wall, x, w, d },                      // x = offset along that wall from its center
             sidingColor: "#rrggbb", trimColor: "#rrggbb" })   // call first, once. w along x, d along z, h = wall height (eaves)
+kit.wing({ wall, offset, w, d, h, roof, roofStyle: "hip"|"gable"|"flat", ridge, siding, stories, garage: { wall, x, width } })
+                                                              // an attached section sticking out of the main block's `wall`:
+                                                              // w = width along that wall, d = depth away from it, own roof (<= 4 wings)
+kit.chimney({ x, z, h })                                      // masonry chimney; h = height above ground
 kit.vent({ wall: "N"|"E"|"S"|"W", x, h, screened })          // x = offset along the wall from its center, h = height above ground
 kit.gutter({ wall, debris })                                  // one per wall that has a gutter
 kit.deck({ wall, depth, length, offset, material: "wood"|"composite", underside: "open"|"enclosed", debris })
@@ -32,7 +36,12 @@ kit.object({ x, z, kind: "patio_furniture"|"trash_bin"|"propane_tank"|"car"|"doo
 kit.camera({ id, pos: [x, y, z], lookAt: [x, y, z], videoTimestamp: "m:ss" })   // >= 4, matching real video moments (use the real camera height, e.g. 60+ ft for drone shots)
 kit.note("short text")                                        // optional assumptions
 Make it LOOK like the video: match stories, roof style and ridge direction, garage/porch placement, siding and plant colors,
-neighbors, driveway/street and any forest edge. Fire-relevant facts (materials, what touches what) matter most."""
+neighbors, driveway/street and any forest edge. Fire-relevant facts (materials, what touches what) matter most.
+HOUSE SHAPE: real houses are rarely one box. Use kit.house for the largest block and kit.wing for every part that sticks out
+with its own roof line: a forward or side garage (put the garage door on the wing), an L or T leg, a lower one-story section,
+a bay/bump-out. A front-facing gable means the main ridge runs front-to-back (ridge "z" when the front is the N wall).
+Use the right roofStyle per block (hip vs gable), the right height per block, and add chimneys you can see.
+Plant detail: give every plant a color that matches the footage (autumn yellow, burgundy, dark evergreen) and a realistic height."""
 
 SURVEY = """Watch this entire walk-around video of a home (with any narration).
 Build an inventory of everything relevant to wildfire EMBER risk near the house: roof and siding materials, gutters (and whether
@@ -50,7 +59,9 @@ Return ONLY JSON:
   "summary": "one sentence about the property",
   "house": {{"approx_w_ft": n, "approx_d_ft": n, "wall_height_ft": n, "stories": n, "roof": "...", "roof_style": "hip|gable|flat",
              "siding": "...", "siding_color_hex": "#rrggbb", "wainscot": "none|stone|brick", "garage": "which wall, where",
-             "porch": "which wall, where", "notes": "..."}},
+             "porch": "which wall, where",
+             "shape": "footprint and massing: main block + each wing/garage/bump-out (which side, size, stories, roof style, ridge direction)",
+             "chimneys": "where, if any", "notes": "..."}},
   "surroundings": {{"neighbors": ["position/size/material of each nearby building"], "forest_edge": "where, how far", "driveway_street": "..."}},
   "objects": [
     {{"kind": "gutter|vent|deck|fence|plant|mulch|firewood|object", "description": "...", "material": "...",
@@ -88,7 +99,8 @@ Current scene.js:
 FIDELITY = """Fidelity check. For each camera below you get the REAL video frame and then the RENDER of the current model from the
 same viewpoint. Compare them. Look for: missing or extra objects, wrong side of the house (check for a mirrored layout), wrong materials
 (roof/siding/fence), fence touching vs not touching the house, plants against walls, deck size/side, gutter or vent placement,
-AND the overall look: number of stories, roof style/ridge direction, garage and porch position, siding/plant colors, neighbors,
+AND the overall look: house SHAPE (missing or wrong wings, garage projecting forward or not, L/T shape, lower sections), number of
+stories, roof style/ridge direction per block, gable ends, garage and porch position, siding/plant colors and sizes, neighbors,
 driveway/street, forest edge, and whether the camera framing matches. Ignore lighting and the low-poly style.
 
 Current scene.js:

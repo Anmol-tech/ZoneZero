@@ -54,10 +54,40 @@ export function createKit() {
       if (garage) { oneOf("house", "garage.wall", garage.wall, WALLS); num("house", "garage.x", garage.x ?? 0, -60, 60); num("house", "garage.width", garage.width ?? 16, 8, 40); }
       if (porch) { oneOf("house", "porch.wall", porch.wall, WALLS); num("house", "porch.x", porch.x ?? 0, -60, 60); num("house", "porch.w", porch.w ?? 10, 4, 60); num("house", "porch.d", porch.d ?? 6, 3, 15); }
       const color = (v) => (typeof v === "string" && /^#[0-9a-fA-F]{6}$/.test(v) ? v : null);
-      spec.house = { w, d, h, roof, siding, stories: st, roofStyle, ridge, wainscot,
+      spec.house = { w, d, h, roof, siding, stories: st, roofStyle, ridge, wainscot, wings: [], chimneys: [],
         garage: garage ? { wall: garage.wall, x: garage.x ?? 0, width: garage.width ?? 16 } : null,
         porch: porch ? { wall: porch.wall, x: porch.x ?? 0, w: porch.w ?? 10, d: porch.d ?? 6 } : null,
         sidingColor: color(sidingColor), trimColor: color(trimColor) };
+    },
+    // An attached section that changes the footprint: L/T shapes, a forward garage, a bump-out.
+    // It sticks out from `wall` of the main block, centered `offset` ft along that wall,
+    // `w` ft wide along the wall and `d` ft deep away from it, with its own roof.
+    wing({ wall, offset = 0, w = 20, d = 20, h, roof, roofStyle = "gable", ridge, siding, stories, garage = null } = {}) {
+      if (!needHouse("wing")) return;
+      const H = spec.house;
+      if (H.wings.length >= 4) return err("wing", "at most 4 wings");
+      oneOf("wing", "wall", wall, WALLS); num("wing", "offset", offset, -60, 60); num("wing", "w", w, 4, 80); num("wing", "d", d, 1.5, 60);
+      const wh = h ?? Math.min(H.h, 10);
+      num("wing", "h", wh, 7, H.h + 4);
+      // Masonry-faced sections are modeled as the house siding over a masonry base.
+      const wr = roof ?? H.roof, ws = ["stone", "brick", "masonry"].includes(siding) ? H.siding : (siding ?? H.siding);
+      oneOf("wing", "roof", wr, MATERIALS.roof); oneOf("wing", "siding", ws, MATERIALS.siding); oneOf("wing", "roofStyle", roofStyle, MATERIALS.roofStyle);
+      const along = wall === "N" || wall === "S";
+      // Absolute footprint rectangle (x/z sizes) centered at cx, cz.
+      const sx = along ? w : d, sz = along ? d : w;
+      const cx = along ? offset : (wall === "E" ? H.w / 2 + d / 2 : -H.w / 2 - d / 2);
+      const cz = along ? (wall === "S" ? H.d / 2 + d / 2 : -H.d / 2 - d / 2) : offset;
+      if (garage) { oneOf("wing", "garage.wall", garage.wall, WALLS); num("wing", "garage.width", garage.width ?? 16, 8, 40); }
+      const r = ridge ?? (along ? "z" : "x"); // default: a cross gable perpendicular to the main roof
+      oneOf("wing", "ridge", r, ["x", "z"]);
+      H.wings.push({ id: `w${H.wings.length + 1}`, wall, x: cx, z: cz, w: sx, d: sz, h: wh, roof: wr, siding: ws, roofStyle, ridge: r,
+        stories: stories ?? (wh >= 17 ? 2 : 1), garage: garage ? { wall: garage.wall, x: garage.x ?? 0, width: garage.width ?? 16 } : null });
+    },
+    // A masonry or metal chimney (visual; spark arrestors are outside this model).
+    chimney({ x = 0, z = 0, h } = {}) {
+      if (!needHouse("chimney")) return;
+      num("chimney", "x", x, -80, 80); num("chimney", "z", z, -80, 80);
+      spec.house.chimneys.push({ x, z, h: h ?? spec.house.h + 10 });
     },
     vent({ wall, x = 0, h = 2, screened = false } = {}) {
       if (!needHouse("vent")) return;
@@ -141,11 +171,20 @@ export function createKit() {
   return { kit, spec, errors };
 }
 
-// Distance (ft) from a point on the ground to the house footprint edge (0 if inside).
+// Footprint rectangles: the main block plus any wings, as {x, z, w, d} centered boxes.
+export function houseRects(house) {
+  return [{ x: 0, z: 0, w: house.w, d: house.d }, ...(house.wings || [])];
+}
+
+// Distance (ft) from a point on the ground to the nearest house footprint edge (0 if inside).
 export function distToHouse(house, x, z) {
-  const dx = Math.max(Math.abs(x) - house.w / 2, 0);
-  const dz = Math.max(Math.abs(z) - house.d / 2, 0);
-  return Math.hypot(dx, dz);
+  let best = Infinity;
+  for (const r of houseRects(house)) {
+    const dx = Math.max(Math.abs(x - r.x) - r.w / 2, 0);
+    const dz = Math.max(Math.abs(z - r.z) - r.d / 2, 0);
+    best = Math.min(best, Math.hypot(dx, dz));
+  }
+  return best;
 }
 
 export function validateSpec(spec) {
@@ -155,7 +194,7 @@ export function validateSpec(spec) {
   if (spec.house) {
     for (const o of spec.objects) {
       if (["plant", "mulch", "firewood", "object"].includes(o.kind) && !o.forest && distToHouse(spec.house, o.x, o.z) > 150) errors.push(`${o.id} (${o.kind}) is >150 ft from the house`);
-      if (["plant", "firewood", "object"].includes(o.kind) && Math.abs(o.x) < spec.house.w / 2 - 0.5 && Math.abs(o.z) < spec.house.d / 2 - 0.5) errors.push(`${o.id} (${o.kind}) is inside the house footprint`);
+      if (["plant", "firewood", "object"].includes(o.kind) && houseRects(spec.house).some((r) => Math.abs(o.x - r.x) < r.w / 2 - 0.5 && Math.abs(o.z - r.z) < r.d / 2 - 0.5)) errors.push(`${o.id} (${o.kind}) is inside the house footprint (main block or a wing)`);
     }
     const vents = spec.objects.filter((o) => o.kind === "vent");
     for (const v of vents) {
