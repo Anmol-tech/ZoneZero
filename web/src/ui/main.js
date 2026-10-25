@@ -290,7 +290,7 @@ async function start(mode) {
     const file = $('video').files[0];
     if (!file) { notify('Choose a walk-around video first, or select “Try sample footage”.'); return; }
     data.append('video', file);
-  } else if (mode === 'stock') data.append('sample', 'stock');
+  } else if (mode === 'stock') data.append('sample', $('sampleClip').value);
   data.append('wind', $('wind').value);
   data.append('swarm', $('swarmToggle').checked ? '1' : '0');
   loading = true; setBusy(); notify(); setSetup(false);

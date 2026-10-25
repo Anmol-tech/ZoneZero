@@ -2,7 +2,31 @@
 
 Researched October 25, 2026.
 
-## Downloaded video for a pipeline smoke test
+## New sample: suburban home and trees
+
+- **Jaxon Matthew Willis — suburban home and trees (Pexels, clip 17171031)**
+  - Source: https://www.pexels.com/video/drone-outdoor-home-17171031/
+  - Download: https://videos.pexels.com/video-files/17171031/17171031-hd_1920_1080_30fps.mp4
+  - Creator: Jaxon Matthew Willis.
+  - License: https://www.pexels.com/license/ (free use and modification; do not imply endorsement).
+  - Original local file: `stock/pexels-jaxon-matthew-willis-17171031-original.mp4`.
+  - App-ready local file: `suburban-home-and-trees.mp4` (1280 × 720, 15 fps, H.264, audio removed, fast-start MP4).
+  - Actual downloaded media: 23.39 seconds, 1280 × 720; approximately 8.4 MB before conversion.
+  - Visually checked at multiple points: one continuous drone approach/reveal of a two-story suburban home, with pitched roof, driveway, front planting, tall trees, and neighboring houses. This differs from the original patio-focused clip.
+  - Coverage: partial front/oblique exterior. Trees obscure parts of the home at first; the rear, deck underside, vent screening, and detailed gutter condition are not established by this footage.
+  - In the app: **New assessment → Sample clip → New: suburban home & trees · 23s → Try sample footage**. The existing `sample=video` route selects this file as the only top-level MP4 in `samples/`; the original patio clip remains selectable through `sample=stock`.
+  - Downloaded October 25, 2026. No assessment was started while adding this sample.
+
+To prepare this sample on another machine (run from the repository root in PowerShell):
+
+```powershell
+Invoke-WebRequest -Uri 'https://videos.pexels.com/video-files/17171031/17171031-hd_1920_1080_30fps.mp4' -OutFile 'samples/stock/pexels-jaxon-matthew-willis-17171031-original.mp4'
+ffmpeg -i samples/stock/pexels-jaxon-matthew-willis-17171031-original.mp4 -vf "scale=-2:720,fps=15" -c:v libx264 -crf 25 -preset veryfast -an -movflags +faststart samples/suburban-home-and-trees.mp4
+```
+
+The app-ready `suburban-home-and-trees.mp4` is included in the repository so the new sample works on other checkouts. Original downloads in `stock/` remain local and ignored by Git.
+
+## Original downloaded video for a pipeline smoke test
 
 - **Kindel Media — modern house and outdoor patio (Pexels, clip 7578541)**
   - Source: https://www.pexels.com/video/an-exterior-design-of-a-modern-house-7578541/
