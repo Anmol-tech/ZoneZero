@@ -261,6 +261,18 @@ export function validateSpec(spec) {
     for (const p of pavings) {
       if (!onPaving(p, o.x, o.z)) continue;
       if (o.kind === "object" && ALLOWED_ON[p.surface].includes(o.objKind)) continue;
+      // On a rectangular paving, step it just off the nearest edge when that spot is clear (saves an Argon repair round).
+      if (!p.shape || p.shape === "rect") {
+        const exits = [[p.x - p.w / 2 - 1.5, o.z], [p.x + p.w / 2 + 1.5, o.z], [o.x, p.z - p.d / 2 - 1.5], [o.x, p.z + p.d / 2 + 1.5]]
+          .sort((a, b) => Math.hypot(a[0] - o.x, a[1] - o.z) - Math.hypot(b[0] - o.x, b[1] - o.z));
+        const clear = exits.find(([x, z]) => !pavings.some((q) => onPaving(q, x, z)) && !inNeighbor({ x, z })
+          && !(spec.house && houseRects(spec.house).some((r) => Math.abs(x - r.x) < r.w / 2 && Math.abs(z - r.z) < r.d / 2)));
+        if (clear) {
+          spec.notes.push(`Moved ${o.id} (${label(o)}) ${Math.hypot(clear[0] - o.x, clear[1] - o.z).toFixed(1)} ft off the ${p.surface} ${p.id}`);
+          o.x = Math.round(clear[0] * 10) / 10; o.z = Math.round(clear[1] * 10) / 10;
+          continue;
+        }
+      }
       const hint = p.surface === "driveway" && (o.kind === "plant" || o.kind === "mulch")
         ? " If it grows in an island inside a circular drive, use paving shape \"ring\" (the island stays unpaved); otherwise move it beside the paving."
         : " Move it beside the paving, or shrink/split the paving to match the footage.";

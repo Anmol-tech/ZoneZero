@@ -99,19 +99,23 @@ Return ONLY JSON:
 }}
 Give exactly 4 camera_moments spread across the video, each a clear view of a different side of the house."""
 
-GENERATE = """Write scene.js: a 3D model of this property using ONLY the Scene Kit API below. It will be compared side by side
-with frames from the real video, then used to simulate an ember storm, so materials and what-touches-what matter more than looks.
+# One pass: the scene comes straight from the video (the hazard survey runs alongside it for the evidence panel and plan).
+SCENE_FROM_VIDEO = """Watch this entire walk-around video of a home and write scene.js: a 3D model of the property using ONLY the
+Scene Kit API below. It will be compared side by side with frames from the real video, then used to simulate an ember storm,
+so materials and what-touches-what matter more than looks.
+
+Model every ember hazard you see: each gutter run (and whether it holds leaves/needles), each visible vent, every plant bed and
+shrub near the walls, every fence segment (and whether it touches the house), mulch, firewood, decks, propane, and furniture as
+ONE object per group (item "dining_set" for a table with chairs, "sofa" for a seating area). Get the house shape right: main
+block + a kit.wing for every part with its own roof line, stories, roof style, colors, glass walls. Skip decor and anything
+that cannot burn.
 
 {kit}
 {conventions}
 
-Inventory from the video survey:
-{inventory}
-
-Rules: call kit.house first. Every object in the inventory must appear (be detailed: individual shrubs, each gutter, each vent,
-plant colors, neighbors, paving, forest edge). Furniture is low detail: one kit.object per group (item "dining_set" for a
-table with chairs, "sofa" for a seating area), never one call per chair. Put a `// seen at m:ss` comment above each hazard so it can be traced to the video. Put a kit.camera at each camera_moment
-(id = short name, videoTimestamp exactly as given). Keep everything within 150 ft. Return ONLY one ```js code block."""
+Rules: call kit.house first. Put a `// seen at m:ss` comment above each hazard so it can be traced to the video. Add exactly 4
+kit.camera calls at clear moments of different sides of the house (videoTimestamp "m:ss" from the video). Keep everything within
+150 ft. Return ONLY one ```js code block."""
 
 FIX_SCENE = """Your scene.js failed validation. Fix it and return ONLY one ```js code block with the full corrected file.
 Errors:

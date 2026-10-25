@@ -212,3 +212,14 @@ test('the all-wind result carries the original-house count, so it reads before -
   assert.equal(resultFacts(run).swarm.baselineIgnited, 20);
   assert.match(verdict(resultFacts(run)).title, /after changes$/);
 });
+
+test('a shrub placed on a rectangular patio is stepped off its nearest edge instead of failing validation', () => {
+  const { kit, spec } = createKit();
+  kit.house({ w: 30, d: 20, h: 10 });
+  kit.paving({ x: 0, z: -18, w: 20, d: 12, kind: 'patio' });
+  kit.plant({ x: 8, z: -20, kind: 'shrub' });
+  assert.deepEqual(validateSpec(spec).filter((e) => e.includes('sits on')), []);
+  const p = spec.objects.find((o) => o.kind === 'plant');
+  assert.equal(p.x, 11.5);
+  assert.ok(spec.notes.some((n) => n.includes('off the patio')));
+});

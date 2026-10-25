@@ -7,6 +7,7 @@ import base64
 import json
 import os
 import re
+import threading
 import time
 from pathlib import Path
 
@@ -18,12 +19,15 @@ AGENT = os.getenv("ZZ_AGENT", "antigravity-preview-09-2026")
 INLINE_LIMIT = 18 * 1024 * 1024
 
 _client = None
+_client_lock = threading.Lock()
 
 
 def client() -> genai.Client:
+    # Locked: two threads building clients at once let the loser be garbage-collected, closing it mid-request.
     global _client
-    if _client is None:
-        _client = genai.Client()
+    with _client_lock:
+        if _client is None:
+            _client = genai.Client()
     return _client
 
 

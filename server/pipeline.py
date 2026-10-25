@@ -112,6 +112,17 @@ async def stage_survey(run: Run, video: Path):
     await run.emit("survey", inv.get("summary", "Inventory ready"), "done", inventory=inv)
 
 
+async def stage_scene_from_video(run: Run, video: Path):
+    """Builds the model in one Argon pass over the video (no wait for the survey)."""
+    await run.emit("generate", "Argon is building the 3D model straight from the video…", "running")
+    reply, _ = await asyncio.to_thread(
+        g.ask, [g.text(P.SCENE_FROM_VIDEO.format(kit=P.KIT_DOC, conventions=P.CONVENTIONS)), g.video(video, resolution="high")],
+        system=P.SYSTEM_MODELING, thinking="medium")
+    spec, code = await compile_with_repair(run, g.extract_code(reply), "generate")
+    v = run.add_spec(spec, "generated", code)
+    await run.emit("generate", f"Model built: {len(spec['objects'])} objects, {len(spec['cameras'])} matched cameras", "done", version=v, lines=code.count("\n") + 1)
+
+
 async def compile_with_repair(run: Run, code: str, stage: str, attempts: int = 2) -> tuple[dict, str]:
     for i in range(attempts + 1):
         tmp = run.path("_candidate.js")
@@ -125,17 +136,6 @@ async def compile_with_repair(run: Run, code: str, stage: str, attempts: int = 2
         reply, _ = await asyncio.to_thread(g.ask, [g.text(P.FIX_SCENE.format(errors="\n".join(out["errors"]), code=code))], system=P.SYSTEM_MODELING, thinking="low")
         code = g.extract_code(reply)
     raise RuntimeError("scene.js still invalid after repairs")
-
-
-async def stage_generate(run: Run):
-    await run.emit("generate", "Argon is writing the 3D model (scene.js) in one pass…", "running")
-    reply, _ = await asyncio.to_thread(
-        g.ask, [g.text(P.GENERATE.format(kit=P.KIT_DOC, conventions=P.CONVENTIONS, inventory=json.dumps(run.inventory, indent=1))),
-                g.video(run.path("video.mp4"), resolution="medium")],
-        system=P.SYSTEM_MODELING, thinking="medium")
-    spec, code = await compile_with_repair(run, g.extract_code(reply), "generate")
-    v = run.add_spec(spec, "generated", code)
-    await run.emit("generate", f"Model built: {len(spec['objects'])} objects, {len(spec['cameras'])} matched cameras", "done", version=v, lines=code.count("\n") + 1)
 
 
 async def stage_fidelity(run: Run, video: Path):
@@ -329,9 +329,13 @@ async def run_pipeline(run: Run, video_src: Path | None):
             run.state["video"] = run.url("video.mp4")
             run.state["video_duration"] = tools.video_duration(video)
             await run.emit("prepare", f"Video ready ({tools.video_duration(video):.0f}s)", "done", video=run.state["video"])
-            await stage_survey(run, video)
-            await stage_generate(run)
-            await stage_fidelity(run, video)
+            # The hazard survey (evidence panel, fix planning, report) runs alongside the one-pass model build.
+            survey = asyncio.create_task(stage_survey(run, video))
+            try:
+                await stage_scene_from_video(run, video)
+                await stage_fidelity(run, video)
+            finally:
+                await survey
         else:
             code = (SAMPLES / "demo_scene.js").read_text()
             spec, code = await compile_with_repair(run, code, "generate", attempts=0)

@@ -43,16 +43,17 @@ Repository: [github.com/Anmol-tech/ZoneZero](https://github.com/Anmol-tech/ZoneZ
 phone / drone video
    │
    ▼
-① SURVEY ............ gemini-4-argon · thinking high · agentic high-res video
-   │                   → inventory with timestamps, house shape, surroundings, coverage gaps
-② GENERATE .......... gemini-4-argon · thinking high · writes scene.js with the Scene Kit
-   │                   → validator (Node vm, kit-only) rejects bad scenes; errors go back to Argon
+① MODEL + SURVEY ... in parallel, both gemini-4-argon on the video:
+   │                   · model: one pass, video → scene.js with the Scene Kit (~25–35 s)
+   │                   · survey: agentic high-res video → inventory with timestamps (evidence panel, fixes, plan)
+   │                   → validator (Node vm, kit-only) moves small placement slips itself; real errors go back to Argon
 ③ FIDELITY LOOP ..... render model from video viewpoints (headless Chromium)
    │                   → Argon compares real frame vs render → patches → repeat (≤2 rounds, pass ≥ 8/10)
 ④ SIMULATE .......... deterministic ember storm (seeded), recorded to video with an ignition log
 ⑤ MITIGATION LOOP ... Argon watches the recording → picks catalog fixes (citing video evidence)
    │                   → apply → re-simulate same wind + seed → Argon verifies (simulator is ground truth)
-⑥ ALL-WIND CHECK .... (opt-in) 24 Managed Agents, 8 directions × 3 trials, locally re-verified
+⑥ ALL-WIND CHECK .... (on by default) 24 Managed Agents, 8 directions × 3 trials, locally re-verified;
+   │                   the same 24 scenarios also run locally on the original house → "N/24 before → M/24 after"
 ⑦ ACTION PLAN ....... gemini-3.8-flash writes the narrative from fixed numeric facts
 ```
 
@@ -121,6 +122,7 @@ A single result-first workspace (Three.js + vanilla JS, FastAPI backend):
 | Illustrative property, no video | ~40 s | baseline ignites at 0:32 → survives after one fix round |
 | Same, with the 24-agent all-wind check | **2 min 5 s** | swarm 83 s; result: 7 of 24 scenarios without ignition |
 | Forest-house drone clip (10 s), with all-wind check | **3 min 51 s** | survey 96 s, generation 43 s, swarm 35 s; 24 of 24 without ignition |
+| Modern home & patio clip (20 s), one-pass model build | model visible **25–37 s**; checked **32–107 s** | 107 s when the first fidelity check asks for a rewrite; whole run with all-wind check ~4 min |
 | Two assessments at once (48 agents) | ~2 min each | 0 rate-limit retries, 0 failed agents |
 | 24-agent swarm alone (8 runs) | 35–83 s, median ~70 s | vs ~600–900 s of combined agent time |
 
