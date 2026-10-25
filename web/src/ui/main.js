@@ -292,15 +292,17 @@ async function start(mode) {
     data.append('video', file);
   } else if (mode === 'stock') data.append('sample', 'stock');
   data.append('wind', $('wind').value);
-  if ($('swarmToggle').checked) data.append('swarm', '1');
+  data.append('swarm', $('swarmToggle').checked ? '1' : '0');
   loading = true; setBusy(); notify(); setSetup(false);
   try { const response = await api('/api/runs', { method: 'POST', body: data }); await loadRun(response.id); }
   catch (error) { notify(`Could not start the assessment. ${error.message}`); }
   finally { loading = false; setBusy(); }
 }
 // Remember the all-wind opt-in on this device (it stays opt-in by default).
-try { $('swarmToggle').checked = localStorage.getItem('zz.swarm') === '1'; } catch { /* storage unavailable */ }
-$('swarmToggle').onchange = () => { try { localStorage.setItem('zz.swarm', $('swarmToggle').checked ? '1' : '0'); } catch { /* storage unavailable */ } };
+// On by default; the viewer's own choice to turn it off is remembered on this device.
+$('swarmToggle').checked = true;
+try { if (localStorage.getItem('zz.swarm.v2') === '0') $('swarmToggle').checked = false; } catch { /* storage unavailable */ }
+$('swarmToggle').onchange = () => { try { localStorage.setItem('zz.swarm.v2', $('swarmToggle').checked ? '1' : '0'); } catch { /* storage unavailable */ } };
 $('video').onchange = () => { $('videoName').textContent = $('video').files[0]?.name || ''; notify(); };
 $('start').onclick = () => start('upload');
 $('sample').onclick = () => start('stock');
@@ -386,10 +388,6 @@ function renderTakeaway(summary) {
   document.querySelector('.next-steps').hidden = Boolean(top.length);
   document.body.classList.toggle('has-run', Boolean(state));
   document.body.classList.toggle('no-video', !state?.video);
-  if (previewScenario) {
-    const cell = previewScenario;
-    paint('resultSummary', `<section class="result-card ${cell.houseIgnitedAt === null ? 'success' : 'danger'}"><span class="result-label">SWARM SCENARIO · ${direction(cell.wind)} · SEED ${cell.seed}</span><h3>${cell.houseIgnitedAt === null ? 'No house ignition in this scenario' : `House ignited at ${esc(cell.houseIgnitedAt)}`}</h3><p>Viewing one independent swarm agent’s scenario on the current property. The action plan below belongs to the original single-wind assessment.</p></section>`);
-  }
   $('suggestionCount').textContent = suggestions.length;
   $('recommendationNote').textContent = suggestions.length ? applied.length ? 'Agent recommendations. Tested changes are listed separately below.' : 'Suggested only · these changes have not been simulated.' : 'Recommendations will appear when the assessment finishes.';
   paint('recommendations', suggestions.length ? suggestions.map((fix, index) => {
@@ -503,7 +501,7 @@ function renderAgent() {
   paint('scenarioGrid', `<p class="matrix-summary"><strong>${extended.checked} / ${PLANNED_SCENARIOS} verified</strong> · <strong>${extended.holds} / ${PLANNED_SCENARIOS} without house ignition</strong></p><p class="matrix-note">This fraction describes the tested scenarios; it is not a real-world survival probability. Only locally verified outcomes are counted.</p><div class="matrix-scroll"><table class="scenario-matrix rows"><thead><tr><th scope="col">Wind from</th>${SEEDS.map((seed) => `<th scope="col">Trial ${seed}</th>`).join('')}<th scope="col">No ignition</th></tr></thead><tbody>${WINDS.map((wind) => {
     const cells = SEEDS.map((seed) => extended.cells.find((item) => item.seed === seed && item.wind === wind));
     const d = byDir.find((x) => x.wind === wind);
-    return `<tr><th scope="row">${DIR_NAMES[wind]}</th>${cells.map((cell) => {
+    return `<tr><th scope="row" title="Wind from ${DIR_NAMES[wind]}"><abbr title="${DIR_NAMES[wind]}">${direction(wind)}</abbr></th>${cells.map((cell) => {
       const selected = selectedScenario?.wind === wind && selectedScenario?.seed === cell.seed;
       const [icon, text] = cellLabel(cell);
       const heat = cell.houseIgnitedAt ? Math.max(0.15, 1 - toSec(cell.houseIgnitedAt) / 90).toFixed(2) : 0;
@@ -641,14 +639,16 @@ async function replayScenario() {
   if (!cell?.verified || scenarioResult.houseIgnitedAt !== cell.houseIgnitedAt) return;
   previewScenario = { ...cell };
   sceneRequest++;
-  showSpec(scenarioSpec);
+  keepCamera(() => showSpec(scenarioSpec));
   $('version').value = 'extended';
   sim = new Sim(scenarioSpec, { windFrom: cell.wind, seed: cell.seed, mph: state.agent.mph ?? state.conditions?.mph ?? 30, duration: state.agent.duration || 90 });
   simView = new SimView(scene, built, sim);
   $('play').innerHTML = '<span aria-hidden="true">↻</span> Replay selected scenario';
   vp.querySelector('.viewer-badge').textContent = `SWARM SCENARIO · ${direction(cell.wind)} · SEED ${cell.seed}`;
-  const viewCamera = overviewCamera(scenarioSpec, cell.wind, camera.aspect); camera.position.copy(viewCamera.position); controls.target.set(0, 5, 0);
-  openTab('model'); renderTakeaway(assessmentSummary(state));
+  $('segOriginal').classList.remove('on'); $('segChanges').classList.remove('on');
+  $('scenarioChip').hidden = false;
+  $('scenarioChip').innerHTML = `Scenario: wind from <b>${direction(cell.wind)}</b> · trial ${cell.seed} · ${cell.houseIgnitedAt ? `house ignites at ${esc(cell.houseIgnitedAt)}` : 'no house ignition'} <button data-back-assessment>Back to assessment</button>`;
+  applyLayers();
 }
 
 function render() {
@@ -669,7 +669,7 @@ document.addEventListener('click', (event) => {
   if (cell) {
     const chosenRun = runId;
     selectScenario(...cell.dataset.scenario.split(':').map(Number)).then(() => {
-      if (runId === chosenRun && cell.classList.contains('scenario-preview-card')) $('scenarioDetail').scrollIntoView({ block: 'start' });
+      if (runId === chosenRun) replayScenario();
     });
   }
   if (event.target.closest('#replayScenario')) replayScenario();
@@ -741,7 +741,7 @@ function keepCamera(fn) {
 }
 // Original property | With changes — same camera, same layers.
 async function setVersion(kind) {
-  versionKind = kind;
+  versionKind = kind; previewScenario = null; $('scenarioChip').hidden = true;
   $('segOriginal').classList.toggle('on', kind === 'original'); $('segChanges').classList.toggle('on', kind === 'changes');
   closeHazardCard();
   if (!runId) { keepCamera(() => showSpec(kind === 'original' ? illustrativeSpec : illustrativeFixed, true)); applyLayers(); return; }
@@ -750,6 +750,7 @@ async function setVersion(kind) {
   try { const next = await api(`/api/runs/${runId}/spec/${n}`); keepCamera(() => showSpec(next)); $('version').value = n; applyLayers(); } catch (error) { notify(error.message); }
 }
 $('segOriginal').onclick = () => setVersion('original');
+document.addEventListener('click', (e) => { if (e.target.closest('[data-back-assessment]')) setVersion('changes'); });
 $('segChanges').onclick = () => setVersion('changes');
 
 // Camera tools

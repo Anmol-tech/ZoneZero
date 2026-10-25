@@ -46,8 +46,8 @@ async def create_run(video: UploadFile | None = File(None), sample: str = Form("
                      swarm: str = Form("")):
     run = Run()
     run.wind, run.mph = wind % 360, mph
-    # Opt-in (per run, or ZZ_SWARM_DEFAULT=1): run the 24-agent all-winds check before the final report.
-    run.state["swarm_default"] = swarm == "1" or os.getenv("ZZ_SWARM_DEFAULT") == "1"
+    # The 24-agent all-wind check runs before the final report by default; swarm=0 (or ZZ_SWARM_DEFAULT=0) skips it.
+    run.state["swarm_default"] = swarm != "0" and os.getenv("ZZ_SWARM_DEFAULT", "1") != "0"
     run.state["conditions"] = {"wind": run.wind, "mph": run.mph, "seed": run.seed}
     RUN_REGISTRY[run.id] = run
     src = None
