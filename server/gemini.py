@@ -117,6 +117,10 @@ def start_agent(task: str, files: dict[str, str]) -> str:
     return it.id
 
 
+def cancel_agent(interaction_id: str):
+    return client().interactions.cancel(interaction_id, timeout=30)
+
+
 def stream_agent_steps(interaction_id: str, on_step):
     """Blocking: replays then follows the agent's event stream, calling on_step(dict)
     for each completed step. Background `get()` does not return steps while running."""

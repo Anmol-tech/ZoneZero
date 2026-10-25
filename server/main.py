@@ -2,6 +2,7 @@
 import asyncio
 import json
 import shutil
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -20,6 +21,10 @@ from pipeline import RUN_REGISTRY, Run  # noqa: E402
 @asynccontextmanager
 async def lifespan(app):
     yield
+    active_agents = [run.agent_task for run in RUN_REGISTRY.values() if run.agent_task and not run.agent_task.done()]
+    for task in active_agents:
+        task.cancel()
+    await asyncio.gather(*active_agents, return_exceptions=True)
     await pipeline.renderer.close()
 
 
@@ -97,12 +102,33 @@ async def wind(rid: str, wind: int = Form(...)):
 
 @app.post("/api/runs/{rid}/agent")
 async def agent(rid: str, attach: str = Form("")):
-    """Starts the stress test, or with `attach` re-follows an agent run already in progress."""
+    """Starts 24 separate scenario agents, with bounded concurrent execution."""
     run = get_run(rid)
-    if not run.state["fix_rounds"] and run.state["status"] != "done":
+    if run.state["status"] != "done":
         raise HTTPException(409, "run the pipeline first")
-    asyncio.create_task(pipeline.agent_stress_test(run, attach or None))
-    return {"ok": True}
+    if run.agent_task and not run.agent_task.done():
+        raise HTTPException(409, "A scenario swarm is already running for this assessment")
+    from swarm import ACTIVE, new_state
+    if (run.state.get("agent") or {}).get("status") in ACTIVE:
+        raise HTTPException(409, "An extended job is already active; cancel it before starting another")
+    if attach:
+        raise HTTPException(400, "A single optimizer cannot be attached as a scenario swarm")
+    if run.state.get("agent"):
+        run.path(f"extended_history_{int(time.time())}.json").write_text(json.dumps(run.state["agent"]), encoding="utf-8")
+    run.state["agent"] = new_state(run)
+    await run.emit("agent", "Queued 24 independent managed scenario agents", "running")
+    run.agent_task = asyncio.create_task(pipeline.agent_stress_test(run))
+    return {"ok": True, "id": run.state["agent"]["id"], "agents": 24, "concurrency": run.state["agent"]["concurrency"]}
+
+
+@app.post("/api/runs/{rid}/agent/cancel")
+async def cancel_swarm(rid: str):
+    run = get_run(rid)
+    if run.agent_task and not run.agent_task.done():
+        run.state["agent"]["status"] = "cancelling"
+        run.agent_task.cancel()
+        return {"ok": True, "status": "cancelling"}
+    raise HTTPException(409, "No local scenario swarm is running")
 
 
 @app.get("/api/runs/{rid}/files/{name:path}")

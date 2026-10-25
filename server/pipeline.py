@@ -33,6 +33,7 @@ class Run:
         self.wind, self.mph, self.seed = 45, 30, 7
         self.inventory = None
         self.task: asyncio.Task | None = None
+        self.agent_task: asyncio.Task | None = None
 
     @classmethod
     def load(cls, rid: str) -> "Run":
@@ -288,116 +289,8 @@ async def wind_test(run: Run, wind: int):
         await run.emit("error", f"{type(e).__name__}: {e}", "fail", trace=traceback.format_exc()[-1500:])
 
 
-# ---------- Managed Agent: all-winds stress test in the Antigravity sandbox ----------
+# ---------- Independent per-scenario managed-agent swarm ----------
 
-AGENT_TASK = """You are in a sandbox with a wildfire ember simulator at /workspace/zz (Node.js, ES modules, no dependencies).
-- `node /workspace/zz/scripts/zz.mjs sim <spec.json> <windFromDeg> <seed> <mph>` prints a JSON result (`houseIgnited`, `houseIgnitedAt`, `chain`).
-- `node /workspace/zz/scripts/zz.mjs apply <spec.json> <fixes.json>` prints {{spec, applied, rejected}}; fixes.json = [{{"fix": id, "target": id|"all"}}].
-- `node /workspace/zz/scripts/zz.mjs catalog` prints the only allowed fixes with cost bands ($ < $$ < $$$).
-- /workspace/zz/property.json is the homeowner's ORIGINAL property. /workspace/zz/current_fixes.json is the plan found for one wind ({wind}°).
-
-Goal: find the CHEAPEST set of catalog fixes that keeps the house from igniting for EVERY wind direction 0,45,90,...,315
-at 30 mph, for seeds 1, 2 and 3 (24 runs). Cheapest = fewest $$$ first, then fewest $$, then fewest fixes.
-Write and run a search script (e.g. greedy from current_fixes.json, then try removing each fix), log what you try, and
-VERIFY your final answer by running all 24 simulations on the patched property. If no combination survives all 24, return the
-combination that survives the most and say so.
-
-End your reply with ONE ```json block:
-{{"fixes": [{{"fix": "...", "target": "..."}}], "survives": n_out_of_24, "results": [{{"wind": d, "seed": s, "houseIgnitedAt": null|"m:ss"}}],
-  "combinations_tried": n, "notes": "..."}}"""
-
-
-def agent_files(run: Run) -> dict[str, str]:
-    files = {"/workspace/zz/package.json": json.dumps({"type": "module"})}
-    for rel in ["scripts/zz.mjs", "src/kit/spec.js", "src/sim/nodes.js", "src/sim/embers.js", "src/sim/mitigations.js"]:
-        files[f"/workspace/zz/{rel}"] = (tools.WEB / rel).read_text()
-    files["/workspace/zz/property.json"] = run.spec_path(run.state.get("base_spec", 0)).read_text()
-    applied = [{"fix": a["fix"], "target": a["target"]} for s in run.state["fix_rounds"] for a in s["applied"]]
-    files["/workspace/zz/current_fixes.json"] = json.dumps(applied)
-    return files
-
-
-def _step_line(s: dict) -> str | None:
-    """One log line per interesting agent step (commands it runs, thought headlines)."""
-    if s["type"] == "code_execution_call":
-        return s["summary"].splitlines()[0][:160] if s["summary"] else None
-    if s["type"] == "thought" and s["summary"]:
-        return "💭 " + s["summary"].splitlines()[0].strip("* ")[:140]
-    if s["type"] == "model_output" and s["summary"]:
-        return "💬 " + s["summary"].splitlines()[0][:140]
-    return None
-
-
-async def follow_agent_stream(run: Run, iid: str):
-    """Mirrors the agent's live step stream into the run log (the stream replays from the start)."""
-    loop = asyncio.get_running_loop()
-    seen = 0
-    for attempt in range(6):
-        steps: list[dict] = []
-
-        def on_step(s, steps=steps):
-            steps.append(s)
-            if len(steps) > seen:
-                run.state["agent"]["steps"] = steps[-60:]
-                run.state["agent"]["step_count"] = len(steps)
-                line = _step_line(s)
-                if line:
-                    asyncio.run_coroutine_threadsafe(run.emit("agent", line, "info"), loop)
-
-        try:
-            await asyncio.to_thread(g.stream_agent_steps, iid, on_step)
-            return
-        except Exception:
-            seen = max(seen, len(steps))  # stream dropped; reconnect and skip what we already showed
-            await asyncio.sleep(3)
-
-
-async def agent_stress_test(run: Run, iid: str | None = None):
-    try:
-        if iid is None:
-            await run.emit("agent", "Launching Managed Agent (Antigravity sandbox): all-winds stress test…", "running")
-            iid = await asyncio.to_thread(g.start_agent, AGENT_TASK.format(wind=run.wind), agent_files(run))
-        run.state["agent"] = {"id": iid, "status": "in_progress", "steps": [], "started": time.time()}
-        await run.emit("agent", f"Agent running ({iid[:18]}…)", "running")
-        follower = asyncio.create_task(follow_agent_stream(run, iid))
-        misses = 0
-        while True:
-            await asyncio.sleep(5)
-            try:
-                st = await asyncio.to_thread(g.poll_agent, iid)
-                misses = 0
-            except Exception as e:  # the agent keeps running server-side; just poll again
-                misses += 1
-                if misses > 8:
-                    raise
-                await run.emit("agent", f"Status check failed ({type(e).__name__}); retrying…", "warn")
-                continue
-            run.state["agent"]["status"] = st["status"]
-            if not any(k in st["status"] for k in ("in_progress", "queued")):
-                break
-        await asyncio.sleep(2)
-        follower.cancel()
-        if "completed" not in st["status"]:
-            raise RuntimeError(f"agent ended with status {st['status']}")
-        result = g.parse_json(st["output_text"])
-        run.state["agent"]["result"] = result
-        await run.emit("agent", f"Agent proposes {len(result.get('fixes', []))} fixes, claims {result.get('survives')}/24 survive", "info", agent=result)
-
-        # Trust, but verify: replay the agent's plan locally on the original property.
-        fixes_path = run.path("agent_fixes.json")
-        fixes_path.write_text(json.dumps(result.get("fixes", [])))
-        applied = await asyncio.to_thread(tools.apply_fixes, run.spec_path(run.state.get("base_spec", 0)), fixes_path)
-        sp = run.path("agent_spec.json")
-        sp.write_text(json.dumps(applied["spec"]))
-        ok = 0
-        grid = []
-        for w in range(0, 360, 45):
-            for seed in (1, 2, 3):
-                r = await asyncio.to_thread(tools.simulate, sp, w, seed, run.mph)
-                ok += not r["houseIgnited"]
-                grid.append({"wind": w, "seed": seed, "houseIgnitedAt": r["houseIgnitedAt"]})
-        run.state["agent"]["local_check"] = {"survives": ok, "grid": grid, "applied": applied["applied"]}
-        await run.emit("agent", f"Local re-check of the agent's plan: {ok}/24 runs survive" + (" ✅" if ok == result.get("survives") else " (differs from agent's claim)"),
-                       "done", check=run.state["agent"]["local_check"])
-    except Exception as e:
-        await run.emit("agent", f"Agent error: {type(e).__name__}: {e}", "fail", trace=traceback.format_exc()[-1500:])
+async def agent_stress_test(run: Run):
+    from swarm import run_swarm
+    await run_swarm(run)

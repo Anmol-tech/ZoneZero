@@ -6,7 +6,9 @@ import { CATALOG } from '../sim/mitigations.js';
 import { createKit } from '../kit/spec.js';
 import { PHASES, assessmentSummary, phaseStates } from './assessment.js';
 import { computeMarkers, groupMarkers, projectPins } from '../render/markers.js';
-import { drawPins } from '../render/views.js';
+import { drawPins, overviewCamera } from '../render/views.js';
+import { WINDS, SEEDS, extendedSummary, durationLabel } from './extended.js';
+import { createScenarioPreviewer } from './scenario-previews.js';
 import demoScene from '../../../samples/demo_scene.js?raw';
 
 const $ = (id) => document.getElementById(id);
@@ -32,6 +34,11 @@ const fixLabel = (title, id) => FIX_LABELS[id || Object.keys(CATALOG).find((key)
 let runId = null, state = null, eventSource = null, epoch = 0, loading = false;
 let events = new Map(), refreshTimer, refreshing = false, refreshAgain = false, currentTab = 'model';
 let versionKey = '', sceneRequest = 0;
+let extendedLaunching = 0, previousAgentId = null;
+let scenarioAgentId = null, scenarioSpec = null, selectedScenario = null, scenarioResult = null, previewScenario = null, scenarioToken = 0;
+let scenarioSpecPromise = null, previewer = null, previewBusy = false;
+const thumbnails = new Map(), thumbnailErrors = new Map(), previewQueue = [], previewQueued = new Set();
+const extendedState = () => extendedSummary(extendedLaunching && (!state?.agent || state.agent.id === previousAgentId) ? { launched: extendedLaunching, status: 'launching' } : state?.agent, [...events.values()]);
 
 async function api(url, options) {
   const response = await fetch(url, options);
@@ -104,7 +111,7 @@ function animate(now) {
       while (acc >= sim.opts.dt && !sim.done) { sim.step(); acc -= sim.opts.dt; }
       simView.update(dt);
       $('simStatus').textContent = `Preview ${fmtTime(sim.t)} · ` + (sim.houseIgnitedAt !== null ? `House ignited at ${fmtTime(sim.houseIgnitedAt)}` : sim.done ? 'No house ignition in this preview' : 'No house ignition yet');
-      if (sim.done) $('play').innerHTML = '<span aria-hidden="true">↻</span> Replay ember test';
+      if (sim.done) $('play').innerHTML = previewScenario ? '<span aria-hidden="true">↻</span> Replay selected scenario' : '<span aria-hidden="true">↻</span> Replay ember test';
     }
     if (flight) stepFlight(dt);
     controls.update(); renderer.render(scene, camera);
@@ -172,6 +179,7 @@ $('labels').onclick = () => {
 let showingBase = false;
 $('beforeAfter').onclick = async () => {
   if (!state || state.base_spec === undefined) return;
+  previewScenario = null;
   showingBase = !showingBase;
   const n = showingBase ? state.base_spec : state.spec_versions.at(-1).n;
   const cam = camera.position.clone(), target = controls.target.clone();
@@ -179,10 +187,12 @@ $('beforeAfter').onclick = async () => {
     showSpec(await api(`/api/runs/${runId}/spec/${n}`));
     $('version').value = n;
     camera.position.copy(cam); controls.target.copy(target);
+    renderTakeaway(assessmentSummary(state));
     $('beforeAfter').innerHTML = showingBase ? '<span aria-hidden="true">⇄</span> Showing before' : '<span aria-hidden="true">⇄</span> Showing after';
   } catch (error) { notify(error.message); }
 };
 $('play').onclick = () => {
+  if (previewScenario) { replayScenario(); return; }
   if (!spec) return;
   const selectedSpec = spec; showSpec(selectedSpec, !runId);
   const latest = state?.sims?.at(-1);
@@ -198,15 +208,23 @@ function openTab(name) {
 }
 document.querySelectorAll('[data-tab]').forEach((button) => { button.onclick = () => openTab(button.dataset.tab); });
 $('version').onchange = async () => {
+  if ($('version').value === 'extended') {
+    const first = extendedState()?.cells.find((cell) => cell.verified);
+    if (first) { if (!selectedScenario) await selectScenario(first.wind, first.seed); await replayScenario(); }
+    return;
+  }
+  previewScenario = null;
   const id = runId, request = ++sceneRequest;
-  try { const next = await api(`/api/runs/${id}/spec/${$('version').value}`); if (runId === id && request === sceneRequest) showSpec(next); } catch (error) { notify(error.message); }
+  try { const next = await api(`/api/runs/${id}/spec/${$('version').value}`); if (runId === id && request === sceneRequest) { showSpec(next); renderTakeaway(assessmentSummary(state)); } } catch (error) { notify(error.message); }
 };
 async function renderVersions() {
   const versions = state?.spec_versions || [];
-  const key = `${runId}:${versions.length}`;
+  const hasExtendedPlan = Boolean(state?.agent?.local_check?.grid?.length);
+  const key = `${runId}:${versions.length}:${hasExtendedPlan}`;
   if (!versions.length || key === versionKey) return;
   versionKey = key;
-  paint('version', versions.map((v) => `<option value="${v.n}">v${v.n} · ${esc(v.label.split(':')[0].replace('fidelity fix', 'model correction').replace('fix round', 'mitigation pass'))}</option>`).join(''));
+  paint('version', versions.map((v) => `<option value="${v.n}">v${v.n} · ${esc(v.label.split(':')[0].replace('fidelity fix', 'model correction').replace('fix round', 'mitigation pass'))}</option>`).join('') + (hasExtendedPlan ? '<option value="extended">Swarm property snapshot</option>' : ''));
+  if (previewScenario && hasExtendedPlan) { $('version').value = 'extended'; return; }
   $('version').value = versions.at(-1).n;
   const id = runId, request = ++sceneRequest;
   try { const next = await api(`/api/runs/${id}/spec/${versions.at(-1).n}`); if (runId === id && request === sceneRequest) showSpec(next); } catch (error) { notify(error.message); }
@@ -217,6 +235,7 @@ async function loadRun(id) {
   eventSource?.close(); clearTimeout(refreshTimer); epoch++; sceneRequest++;
   const activeEpoch = epoch;
   runId = id; state = null; events = new Map(); versionKey = ''; rendered.clear();
+  scenarioAgentId = null; scenarioSpec = null; selectedScenario = null; scenarioResult = null; previewScenario = null; scenarioToken++; extendedLaunching = 0;
   document.querySelectorAll('.left, .right, .tab').forEach((panel) => { panel.scrollTop = 0; });
   $('runId').textContent = id; $('player').removeAttribute('src'); $('player').load();
   paint('version', '<option>Awaiting model</option>');
@@ -254,10 +273,11 @@ async function refresh(activeEpoch = epoch) {
   finally { refreshing = false; if (refreshAgain) { refreshAgain = false; refresh(epoch); } }
 }
 function setBusy() {
-  const busy = loading || Boolean(state && ['created', 'running'].includes(state.status));
+  const extendedBusy = Boolean(extendedLaunching || extendedState()?.active);
+  const busy = loading || extendedBusy || Boolean(state && ['created', 'running'].includes(state.status));
   for (const id of ['start', 'sample', 'illustrative']) $(id).disabled = busy;
   const ready = state?.status === 'done';
-  $('windTest').disabled = !ready; $('agent').disabled = !ready;
+  $('windTest').disabled = !ready || extendedBusy; $('agent').disabled = !ready || extendedBusy;
   $('beforeAfter').disabled = !(state?.base_spec !== undefined && state.spec_versions.at(-1)?.n > state.base_spec);
 }
 async function start(mode) {
@@ -320,6 +340,10 @@ function renderTakeaway(summary) {
     description = latest.result.houseIgnited ? 'A path to the house remains in the latest test. Review the ignition chain and the action plan.' : applied.length ? 'The agent changed the model and re-ran the simulation. These are simulated improvements, not physical work.' : (latest.result.ignited || []).length ? 'Nearby fuels still caught fire. The agent suggested improvements, but did not apply or re-test them.' : 'No ignition was observed under these conditions. This does not establish safety under other conditions.';
   }
   paint('resultSummary', `<section class="result-card ${tone}"><span class="result-label">${label}</span><h3>${esc(title)}</h3><p>${esc(description)}</p><div class="result-metrics"><div><strong>${sceneEdits}</strong><span>Model corrections</span></div><div><strong>${summary.pendingTests ? '…' : summary.fixGroups.length}</strong><span>${summary.pendingTests ? 'Verifying fixes' : 'Fix types tested'}</span></div><div><strong>${suggestions.length}</strong><span>Report priorities</span></div></div></section>`);
+  if (previewScenario) {
+    const cell = previewScenario;
+    paint('resultSummary', `<section class="result-card ${cell.houseIgnitedAt === null ? 'success' : 'danger'}"><span class="result-label">SWARM SCENARIO · ${direction(cell.wind)} · SEED ${cell.seed}</span><h3>${cell.houseIgnitedAt === null ? 'No house ignition in this scenario' : `House ignited at ${esc(cell.houseIgnitedAt)}`}</h3><p>Viewing one independent swarm agent’s scenario on the current property. The action plan below belongs to the original single-wind assessment.</p></section>`);
+  }
   $('suggestionCount').textContent = suggestions.length;
   $('recommendationNote').textContent = suggestions.length ? applied.length ? 'Agent recommendations. Tested changes are listed separately below.' : 'Suggested only · these changes have not been simulated.' : 'Recommendations will appear when the assessment finishes.';
   paint('recommendations', suggestions.length ? suggestions.map((fix, index) => {
@@ -343,13 +367,19 @@ function renderActivity() {
     counts ? `${plural(counts, 'recorded test')} · ${summary.pendingTests ? 'verifying the latest changes.' : summary.applied.length ? `${plural(summary.fixGroups.length, 'fix type')} re-tested.` : state?.status === 'running' ? 'evaluating changes.' : 'no fixes applied.'}` : 'Simulate ember exposure and test any required fixes.',
     state?.report ? `${plural(summary.suggestions.length, 'priority')} with reasons and cost bands.` : 'Rank and explain the next steps.',
   ];
-  paint('log', PHASES.map((phase, index) => {
+  let activity = PHASES.map((phase, index) => {
     const group = allEvents.filter((event) => phase.stages.includes(event.stage) || (index === statuses.findIndex((status) => status === 'error') && event.stage === 'error'));
     let extra = '';
     if (index === 1 && corrections.length) extra = `<div class="raw-event"><strong>What was corrected in the scene</strong><ul>${corrections.map((issue) => `<li>${esc(issue.fix || issue.problem)}</li>`).join('')}</ul></div>`;
     const raw = group.map((event) => `<div class="raw-event">${esc(event.msg)}${event.plan ? `<ul>${(event.plan.fixes || []).map((fix) => `<li>${esc(CATALOG[fix.fix]?.title || fix.fix)}: ${esc(fix.why)}${evidence(fix)}</li>`).join('')}</ul>` : ''}${event.errors ? `<pre>${esc(event.errors.join('\n'))}</pre>` : ''}${event.trace ? `<pre>${esc(event.trace)}</pre>` : ''}</div>`).join('');
     return `<li class="phase ${statuses[index]}"><span class="phase-dot">${statuses[index] === 'complete' ? '✓' : index + 1}</span><h4>${esc(phase.title)}</h4><p>${esc(stories[index])}</p>${group.length ? `<details><summary>${group.length} event${group.length === 1 ? '' : 's'} · view details</summary>${extra}${raw}</details>` : ''}</li>`;
-  }).join(''));
+  }).join('');
+  const extended = extendedState();
+  if (extended) {
+    const group = allEvents.filter((event) => event.stage === 'agent' && event.t >= (extended.launched || 0));
+    activity += `<li class="phase ${extended.active ? 'active' : extended.phase === 'complete' ? 'complete' : 'error'}"><span class="phase-dot">${extended.active ? '5' : extended.phase === 'complete' ? '✓' : '!'}</span><h4>24-agent scenario swarm</h4><p>${extended.phase === 'complete' ? `${extended.holds}/24 scenarios had no house ignition.` : extended.phase === 'failed' ? 'Extended test stopped; open its results for details.' : `${extended.running} agents active · ${extended.checked}/24 verified.`} <span data-extended-elapsed></span></p><button class="scenario-inline-link" data-open-tab="sims">View all scenarios ↗</button>${group.length ? `<details><summary>${group.length} events · view details</summary>${group.map((event) => `<div class="raw-event">${esc(event.msg)}</div>`).join('')}</details>` : ''}</li>`;
+  }
+  paint('log', activity);
 }
 // The real footage frame Argon cited as proof of a hazard; click it to seek the video.
 function evidence(item) {
@@ -379,13 +409,157 @@ function renderEvidence(summary) {
 }
 function renderAgent() {
   const agent = state?.agent;
-  if (!agent) { paint('agentGrid', ''); return; }
-  const check = agent.local_check;
-  let html = `<p>Extended test: ${esc(agent.status)} · ${agent.step_count || agent.steps?.length || 0} steps</p>`;
-  if (agent.result) html += `<p>Agent plan: ${(agent.result.fixes || []).map((fix) => esc(CATALOG[fix.fix]?.title || fix.fix)).join('; ')}.</p>`;
-  if (check) html += `<p>Local check: <b>${check.survives}/24</b> runs had no house ignition.</p><table class="grid"><caption>Recorded house ignition time by wind and seed</caption><tr><th>Seed</th>${[0,45,90,135,180,225,270,315].map((wind) => `<th>${direction(wind)}</th>`).join('')}</tr>${[1,2,3].map((seed) => `<tr><th>${seed}</th>${[0,45,90,135,180,225,270,315].map((wind) => { const item = check.grid.find((row) => row.wind === wind && row.seed === seed); return `<td class="${item && !item.houseIgnitedAt ? 'ok' : 'bad'}">${item ? item.houseIgnitedAt || '✓' : '—'}</td>`; }).join('')}</tr>`).join('')}</table>`;
-  paint('agentGrid', html);
+  if (extendedLaunching && (agent?.id !== previousAgentId && agent?.id || extendedState()?.phase === 'failed')) extendedLaunching = 0;
+  const extended = extendedState();
+  $('extendedPanel').hidden = !extended;
+  if (!extended) { paint('agentGrid', ''); return; }
+  if (agent?.id !== scenarioAgentId) {
+    scenarioAgentId = agent?.id; scenarioSpec = null; scenarioSpecPromise = null; selectedScenario = null; scenarioResult = null; scenarioToken++; thumbnails.clear(); thumbnailErrors.clear(); previewQueue.length = 0; previewQueued.clear();
+  }
+  const labels = { launching: 'Launching scenario agents', searching: extended.isSwarm ? 'Scenario agents running' : 'Legacy optimizer running', verifying: 'Verifying locally', complete: '24 agents verified', partial: 'Some agents failed', failed: 'Test interrupted', cancelled: 'Test cancelled' };
+  $('extendedStatus').textContent = labels[extended.phase];
+  $('extendedStatus').className = `pill ${extended.phase === 'complete' ? 'good' : extended.phase === 'failed' ? 'bad' : 'neutral'}`;
+  paint('agentGrid', `<p>${esc(labels[extended.phase])} · <span data-extended-elapsed></span></p><button class="scenario-inline-link" data-open-tab="sims">Open 24-scenario view ↗</button>`);
+  paint('extendedMetrics', `<div><strong data-extended-elapsed></strong><span>${extended.active ? 'Elapsed time' : 'Total time'}</span></div><div><strong>${extended.checked}/24</strong><span>Locally checked</span></div><div><strong>${extended.checked ? extended.holds : '—'}</strong><span>No house ignition</span></div><div><strong>${extended.startedCount}/24</strong><span>Remote agents started</span></div>`);
+  const messages = {
+    launching: 'Launching separate remote sandboxes for the 24 assigned scenarios.',
+    searching: `${extended.running} agents active · ${extended.checked} locally checked · ${extended.failed} failed. Each agent tests one wind/seed against the same property.`,
+    verifying: `Checking scenario results locally: ${extended.checked} of 24 recorded. Remote claims are not shown as verified results.`,
+    complete: `${extended.holds} of 24 scenarios had no house ignition at ${agent?.mph ?? state?.conditions?.mph ?? 30} mph over ${extended.duration}s. Select a cell to inspect or replay that scenario.`,
+    partial: `${extended.checked}/24 scenarios verified; ${extended.failed} agents failed. Failed cells are not passes.`,
+    cancelled: 'The swarm was cancelled. Completed scenario results are preserved.',
+    failed: extended.error || 'The extended test could not finish. Completed assessment results are still available below.',
+  };
+  $('extendedProgress').textContent = messages[extended.phase];
+  paint('scenarioGrid', `<table class="scenario-matrix"><caption>Locally verified scenarios · wind from each compass direction</caption><thead><tr><th scope="col">Seed</th>${WINDS.map((wind) => `<th scope="col">${direction(wind)}<small>${wind}°</small></th>`).join('')}</tr></thead><tbody>${SEEDS.map((seed) => `<tr><th scope="row">${seed}</th>${WINDS.map((wind) => {
+    const cell = extended.cells.find((item) => item.seed === seed && item.wind === wind);
+    const selected = selectedScenario?.wind === wind && selectedScenario?.seed === seed;
+    const label = cell.verified ? cell.outcome === 'no_ignition' ? 'Holds' : cell.houseIgnitedAt : cell.worker?.status || 'queued';
+    return `<td><button class="scenario-cell ${cell.outcome} ${selected ? 'selected' : ''}" data-scenario="${wind}:${seed}" ${cell.verified ? '' : 'disabled'} aria-pressed="${selected}" aria-label="Agent wind ${direction(wind)}, seed ${seed}: ${esc(label)}">${esc(label)}</button></td>`;
+  }).join('')}</tr>`).join('')}</tbody></table>`);
+  const timings = [
+    ['First remote agent started', extended.timings.first_agent_started_seconds],
+    ['First locally verified result', extended.timings.first_result_seconds],
+    ['Wall-clock completion', extended.timings.total_seconds],
+    ['Sum of individual agent times', extended.timings.sum_worker_seconds],
+    ['Sum of local verification times', extended.timings.local_seconds_sum],
+  ];
+  paint('extendedPlan', `<p>24 independent managed jobs; concurrency ${agent?.concurrency || 24}. All jobs test scene version ${agent?.spec_n ?? '—'} at ${agent?.mph ?? 30} mph for 90 seconds. Suggested fixes remain recommendations and do not change these results.</p><dl class="extended-timings">${timings.map(([label, seconds]) => `<div><dt>${label}</dt><dd>${durationLabel(seconds)}</dd></div>`).join('')}</dl><p>The sum of worker times describes overlapping work, not a measured sequential benchmark. Thumbnails and 3D replays are deterministic recalculations, not video recordings.</p>`);
+  if (extended.checked && !selectedScenario) {
+    const first = extended.cells.find((cell) => cell.verified);
+    selectScenario(first.wind, first.seed);
+  } else renderScenarioDetail();
+  renderScenarioPreviews(); updateExtendedClock();
 }
+
+async function getScenarioSpec() {
+  if (scenarioSpec) return scenarioSpec;
+  if (!scenarioSpecPromise) {
+    const id = runId, agentId = state.agent.id;
+    scenarioSpecPromise = api(`/api/runs/${id}/files/${encodeURIComponent(state.agent.spec || 'agent_spec.json')}`).then((value) => {
+      if (runId === id && state?.agent?.id === agentId) scenarioSpec = value;
+      return value;
+    }).catch((error) => { scenarioSpecPromise = null; throw error; });
+  }
+  return scenarioSpecPromise;
+}
+
+function renderScenarioPreviews() {
+  const extended = extendedState();
+  $('swarmPreviews').hidden = !extended?.isSwarm;
+  if (!extended?.isSwarm) return;
+  paint('scenarioPreviews', extended.cells.map((cell) => {
+    const key = `${cell.wind}-${cell.seed}`, image = thumbnails.get(key);
+    const status = cell.verified ? cell.houseIgnitedAt === null ? 'No house ignition' : `Ignition ${cell.houseIgnitedAt}` : cell.worker?.status || 'queued';
+    return `<button class="scenario-preview-card ${cell.outcome}" data-scenario="${cell.wind}:${cell.seed}" ${cell.verified ? '' : 'disabled'}><div class="scenario-preview-image"><img data-preview-image="${key}" ${image ? `src="${image.src}"` : 'hidden'} alt="Simulated scenario preview: wind ${direction(cell.wind)}, seed ${cell.seed}"><span data-preview-placeholder="${key}" ${image ? 'hidden' : ''}>${cell.verified ? thumbnailErrors.get(key) ? 'Replay unavailable' : 'Preparing replay…' : esc(status)}</span><small data-preview-time="${key}">${image ? `Preview at ${image.time}` : ''}</small></div><div class="scenario-preview-label"><strong>Agent ${direction(cell.wind)} · seed ${cell.seed}</strong><span>${esc(status)}</span><small>${cell.worker?.elapsed_seconds ? durationLabel(cell.worker.elapsed_seconds) + ' · locally checked' : cell.worker?.id ? 'Independent remote agent started' : 'Awaiting remote sandbox'}</small></div></button>`;
+  }).join(''));
+  for (const cell of extended.cells) {
+    const key = `${cell.wind}-${cell.seed}`;
+    if (cell.verified && !thumbnails.has(key) && !thumbnailErrors.has(key) && !previewQueued.has(key)) {
+      previewQueued.add(key); previewQueue.push({ cell, key, agentId: scenarioAgentId });
+    }
+  }
+  pumpPreviews();
+}
+
+async function pumpPreviews() {
+  if (previewBusy || !previewQueue.length) return;
+  previewBusy = true;
+  const job = previewQueue.shift();
+  try {
+    const plan = await getScenarioSpec();
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    if (job.agentId !== scenarioAgentId) return;
+    previewer ||= createScenarioPreviewer();
+    const image = previewer.render(plan, job.cell, { mph: state.agent.mph ?? 30, duration: 90 });
+    thumbnails.set(job.key, image);
+    const element = document.querySelector(`[data-preview-image="${job.key}"]`);
+    if (element) {
+      element.src = image.src; element.hidden = false;
+      document.querySelector(`[data-preview-placeholder="${job.key}"]`).hidden = true;
+      document.querySelector(`[data-preview-time="${job.key}"]`).textContent = `Preview at ${image.time}`;
+    }
+  } catch (error) {
+    thumbnailErrors.set(job.key, error.message);
+    const element = document.querySelector(`[data-preview-placeholder="${job.key}"]`);
+    if (element) element.textContent = 'Replay unavailable';
+  } finally {
+    previewQueued.delete(job.key); previewBusy = false;
+    if (previewQueue.length) requestAnimationFrame(pumpPreviews);
+  }
+}
+
+function updateExtendedClock() {
+  const extended = extendedState();
+  if (extended) document.querySelectorAll('[data-extended-elapsed]').forEach((element) => { element.textContent = durationLabel(extended.elapsed); });
+}
+
+function renderScenarioDetail() {
+  const extended = extendedState();
+  if (!extended || !selectedScenario) { paint('scenarioDetail', '<p class="empty-state">Scenario inspection becomes available as local results arrive.</p>'); return; }
+  const cell = extended.cells.find((item) => item.wind === selectedScenario.wind && item.seed === selectedScenario.seed);
+  if (!cell?.verified) return;
+  const matches = scenarioResult && scenarioResult.houseIgnitedAt === cell.houseIgnitedAt;
+  const worker = cell.worker;
+  const workerDetails = worker ? `<div class="worker-diagnosis"><p><b>Agent ${direction(cell.wind)} / seed ${cell.seed}</b> · ${durationLabel(worker.elapsed_seconds)}${worker.agent_agrees === false ? ' · agent claim disagreed; using local simulation' : ' · locally verified'}</p><p>${esc(worker.diagnosis || '')}</p>${worker.suggested_fixes?.length ? `<h4>Agent suggestions · not applied or re-tested</h4><ul>${worker.suggested_fixes.map((fix) => `<li>${esc(fixLabel(fix.title, fix.fix))}${fix.why ? ': ' + esc(fix.why) : ''}</li>`).join('')}</ul>` : ''}<details><summary>Independent managed-agent ID & timing</summary><code>${esc(worker.id)}</code><p>Startup ${durationLabel(worker.timings?.startup_seconds)} · remote execution ${durationLabel(worker.timings?.agent_seconds)} · local check ${durationLabel(worker.timings?.local_seconds)}</p></details></div>` : '';
+  paint('scenarioDetail', `<div class="scenario-detail-heading"><h3>Wind ${direction(cell.wind)} · seed ${cell.seed}</h3>${pill({ houseIgnited: cell.houseIgnitedAt !== null, houseIgnitedAt: cell.houseIgnitedAt })}</div><p>${scenarioResult ? matches ? 'Interactive replay reproduces the stored local result with the same wind, speed, and seed.' : 'The recalculated preview differs from the stored result. The matrix shows the original local verification.' : 'Loading the property snapshot for replay…'}</p>${scenarioResult ? chain(scenarioResult) || `<p>${scenarioResult.ignitedObjects.length} modeled objects ignited; the house did not.</p>` : ''}${workerDetails}<button id="replayScenario" ${matches ? '' : 'disabled'}>Replay this scenario in 3D ↗</button>`);
+}
+
+async function selectScenario(wind, seed) {
+  const cell = extendedState()?.cells.find((item) => item.wind === wind && item.seed === seed && item.verified);
+  if (!cell) return;
+  const token = ++scenarioToken, id = runId;
+  selectedScenario = { wind, seed }; scenarioResult = null; renderScenarioDetail();
+  document.querySelectorAll('[data-scenario]').forEach((button) => {
+    const selected = button.dataset.scenario === `${wind}:${seed}`;
+    button.classList.toggle('selected', selected); button.setAttribute('aria-pressed', String(selected));
+  });
+  try {
+    const plan = await getScenarioSpec();
+    if (token !== scenarioToken || id !== runId) return;
+    scenarioSpec = plan;
+    const mph = state.agent.mph ?? state.conditions?.mph ?? 30;
+    scenarioResult = new Sim(plan, { windFrom: wind, seed, mph, duration: state.agent.duration || 90 }).run();
+    renderScenarioDetail();
+  } catch (error) { if (token === scenarioToken) paint('scenarioDetail', `<p class="empty-state">Could not prepare this replay: ${esc(error.message)}</p>`); }
+}
+
+async function replayScenario() {
+  if (!selectedScenario || !scenarioSpec || !scenarioResult) return;
+  const cell = extendedState()?.cells.find((item) => item.wind === selectedScenario.wind && item.seed === selectedScenario.seed);
+  if (!cell?.verified || scenarioResult.houseIgnitedAt !== cell.houseIgnitedAt) return;
+  previewScenario = { ...cell };
+  sceneRequest++;
+  showSpec(scenarioSpec);
+  $('version').value = 'extended';
+  sim = new Sim(scenarioSpec, { windFrom: cell.wind, seed: cell.seed, mph: state.agent.mph ?? state.conditions?.mph ?? 30, duration: state.agent.duration || 90 });
+  simView = new SimView(scene, built, sim);
+  $('play').innerHTML = '<span aria-hidden="true">↻</span> Replay selected scenario';
+  vp.querySelector('.viewer-badge').textContent = `SWARM SCENARIO · ${direction(cell.wind)} · SEED ${cell.seed}`;
+  const viewCamera = overviewCamera(scenarioSpec, cell.wind, camera.aspect); camera.position.copy(viewCamera.position); controls.target.set(0, 5, 0);
+  openTab('model'); renderTakeaway(assessmentSummary(state));
+}
+
 function render() {
   const summary = assessmentSummary(state);
   renderObservations(); renderTakeaway(summary); renderActivity(); renderEvidence(summary); renderAgent(); setBusy();
@@ -396,18 +570,36 @@ function render() {
   $('modelWaiting').hidden = !waiting;
   $('play').disabled = waiting;
   if (waiting) $('simStatus').textContent = state.status === 'error' ? 'No model was completed · see agent activity' : 'Waiting for the model generated from this footage';
+  if (extendedState()?.active) $('workspaceStatus').textContent = 'Extended all-winds test running';
 }
-document.addEventListener('click', (event) => { const button = event.target.closest('[data-open-tab]'); if (button) openTab(button.dataset.openTab); });
+document.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-open-tab]'); if (button) openTab(button.dataset.openTab);
+  const cell = event.target.closest('[data-scenario]');
+  if (cell) {
+    const chosenRun = runId;
+    selectScenario(...cell.dataset.scenario.split(':').map(Number)).then(() => {
+      if (runId === chosenRun && cell.classList.contains('scenario-preview-card')) $('scenarioDetail').scrollIntoView({ block: 'start' });
+    });
+  }
+  if (event.target.closest('#replayScenario')) replayScenario();
+});
 $('windTest').onclick = async () => {
   $('windTest').disabled = true; notify();
   try { const data = new FormData(); data.append('wind', $('judgeWind').value); await api(`/api/runs/${runId}/wind`, { method: 'POST', body: data }); openTab('sims'); }
   catch (error) { notify(error.message); $('windTest').disabled = false; }
 };
 $('agent').onclick = async () => {
-  $('agent').disabled = true; notify();
-  try { await api(`/api/runs/${runId}/agent`, { method: 'POST' }); }
-  catch (error) { notify(error.message); $('agent').disabled = false; }
+  extendedLaunching = Date.now() / 1000; previousAgentId = state?.agent?.id || null; notify(); renderAgent(); setBusy(); openTab('sims');
+  try { await api(`/api/runs/${runId}/agent`, { method: 'POST' }); await refresh(); }
+  catch (error) { extendedLaunching = 0; notify(error.message); renderAgent(); setBusy(); }
 };
+let extendedPollAt = 0;
+setInterval(() => {
+  updateExtendedClock();
+  if (runId && (extendedLaunching || extendedState()?.active) && Date.now() - extendedPollAt >= 4000) {
+    extendedPollAt = Date.now(); refresh();
+  }
+}, 1000);
 api('/api/health').then((health) => { $('health').textContent = health.gemini_key ? 'Gemini connected' : 'API key missing'; $('health').style.color = health.gemini_key ? '' : 'var(--fire)'; }).catch(() => { $('health').textContent = 'API offline'; $('health').style.color = 'var(--fire)'; });
 const { kit, spec: illustrativeSpec } = createKit(); new Function('kit', demoScene)(kit); showSpec(illustrativeSpec, true);
 render(); requestAnimationFrame(animate);

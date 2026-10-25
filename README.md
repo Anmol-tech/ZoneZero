@@ -21,8 +21,8 @@ phone video ─▶ ① SURVEY (Argon watches the full video → inventory with t
                  re-simulate, same seed → Argon verifies before/after; the simulator is ground truth)
             ─▶ ⑥ REPORT (ranked fixes with cost bands, Zone 0 checklist)
    + JUDGE WIND TEST: re-test the hardened home under any wind; Argon keeps fixing if it fails
-   + MANAGED AGENT: an Antigravity sandbox agent searches for the cheapest fix set that survives
-     8 wind directions × 3 seeds, then the server re-checks its answer locally
+   + SCENARIO SWARM: 24 separate Antigravity agents concurrently test the same current home
+     (8 wind directions × 3 seeds); each diagnoses its own case and is checked locally
 ```
 
 **Guardrails**
@@ -34,7 +34,7 @@ phone video ─▶ ① SURVEY (Argon watches the full video → inventory with t
 |---|---|
 | Survey, generate, fidelity critique, mitigation, verification | `gemini-4-argon` (Interactions API) |
 | JSON repair, report | `gemini-3.8-flash` |
-| All-winds stress test | Managed Agent `antigravity-preview-09-2026` |
+| All-winds stress test | 24 independent managed agents, `antigravity-preview-09-2026` |
 
 ## Run it
 Requires Node 22+, Python 3.11 with [uv](https://docs.astral.sh/uv/), and ffmpeg.
@@ -48,6 +48,12 @@ uv run python smoke.py                            # optional: time each Gemini c
 ```
 
 Open http://127.0.0.1:5173. Upload a walk-around video, or click **Demo property**.
+
+After an assessment, **Additional tests → Run 24-agent swarm** starts the optional extended test.
+The **Ember tests** view shows all 24 agent states, a wind/seed result matrix, per-agent diagnoses,
+and deterministic preview cards with selectable 3D replays. Agent suggestions are not applied to
+the shared test property. `ZZ_SWARM_CONCURRENCY` defaults to 24; `ZZ_SWARM_TIMEOUT` defaults to
+180 seconds per agent after sandbox creation. See [measured timing and comparison](docs/SWARM_BENCHMARK.md).
 
 ## Layout
 - `web/src/kit/spec.js`: Scene Kit (the API Argon writes against) plus the validator
