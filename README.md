@@ -4,6 +4,17 @@
 
 Built at the Gemini 4 Argon SF Hackathon (Oct 25, 2026). Track 2: More Dimensions, plus the Managed Agents side prize.
 
+## Demo video
+**[▶ Watch the 60-second demo](docs/zonezero-demo.mp4)**: why embers matter, what ZoneZero does, and how it works, shown on a real run (house ignites at 60 s, then no ignition after fixes, and 0 of 24 wind scenarios ignite).
+
+The video is a [Remotion](https://www.remotion.dev) project in [`demo-video/`](demo-video/). Scenes are in `src/scenes.tsx`, timing is in `src/Composition.tsx`, and the Gemini TTS voiceover clips are in `public/vo/`.
+
+```bash
+cd demo-video && npm install
+npx remotion studio                                  # preview and edit
+npx remotion render ZoneZeroDemo out/zonezero-demo.mp4
+```
+
 ## Who it's for
 A homeowner in a California fire zone who just got an insurance non-renewal letter. IBHS research finds most homes lost in wildfires are ignited by **embers**, through small details near the house: gutters, vents, fences, mulch, firewood. California's **Zone 0** rules target the first 5 ft around the home. ZoneZero shows *this* home's ignition chain and the cheapest fixes that break it.
 
