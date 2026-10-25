@@ -1,6 +1,7 @@
 """ZoneZero API. Run: uv run uvicorn main:app --port 8000 (from server/)."""
 import asyncio
 import json
+import os
 import shutil
 import time
 from contextlib import asynccontextmanager
@@ -41,9 +42,12 @@ def get_run(rid: str) -> Run:
 
 
 @app.post("/api/runs")
-async def create_run(video: UploadFile | None = File(None), sample: str = Form(""), wind: int = Form(45), mph: int = Form(30)):
+async def create_run(video: UploadFile | None = File(None), sample: str = Form(""), wind: int = Form(45), mph: int = Form(30),
+                     swarm: str = Form("")):
     run = Run()
     run.wind, run.mph = wind % 360, mph
+    # Opt-in (per run, or ZZ_SWARM_DEFAULT=1): run the 24-agent all-winds check before the final report.
+    run.state["swarm_default"] = swarm == "1" or os.getenv("ZZ_SWARM_DEFAULT") == "1"
     run.state["conditions"] = {"wind": run.wind, "mph": run.mph, "seed": run.seed}
     RUN_REGISTRY[run.id] = run
     src = None

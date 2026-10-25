@@ -19,7 +19,8 @@ Run this exact command in your sandbox:
 node /workspace/zz/scripts/zz.mjs sim /workspace/zz/property.json {wind} {seed} {mph}
 
 Read the JSON output. Explain the observed ignition chain for YOUR case. If the house ignites,
-recommend up to three catalog fixes, with targets and reasons. The catalog is below.
+recommend up to three NEW catalog fixes, with targets and reasons. The catalog is below.
+Already applied to this property (do NOT recommend these again; build on them): {already}
 Do NOT change the property, search combinations, test other winds/seeds, or inspect unrelated files.
 This is an independent assessment of one fixed property, not a global optimization job.
 Finish promptly with ONE JSON block:
@@ -64,6 +65,9 @@ async def run_swarm(run, *, concurrency=None, poll_interval=3, timeout=None):
         swarm["spec"] = "swarm_property.json"
         files = sandbox_files(snapshot)
         catalog = tools._node("catalog")
+        # Fixes the frozen property already has, so agents suggest only what is still missing.
+        applied = [f"{a['fix']} → {a['target']}" for r in run.state.get("fix_rounds", []) for a in r.get("applied", [])]
+        already = "; ".join(dict.fromkeys(applied)) or "none"
         swarm["status"] = "running"
         await run.emit("agent", f"Launching 24 independent managed agents ({swarm['concurrency']} concurrent), one per wind/seed scenario", "running")
 
@@ -75,7 +79,7 @@ async def run_swarm(run, *, concurrency=None, poll_interval=3, timeout=None):
                     began = time.time()
                     case.update(status="launching", started=began)
                     await run.emit("agent", f"Agent {case['key']}: starting its independent sandbox", "info", scenario=case["key"])
-                    prompt = TASK.format(**case, mph=run.mph, catalog=catalog)
+                    prompt = TASK.format(**case, mph=run.mph, catalog=catalog, already=already)
                     for attempt in range(4):
                         # Shield creation so cancellation can still obtain and cancel the remote ID.
                         creation = asyncio.create_task(asyncio.to_thread(g.start_agent, prompt, files))

@@ -339,7 +339,20 @@ function renderTakeaway(summary) {
     label = 'LATEST SIMULATION RESULT';
     description = latest.result.houseIgnited ? 'A path to the house remains in the latest test. Review the ignition chain and the action plan.' : applied.length ? 'The agent changed the model and re-ran the simulation. These are simulated improvements, not physical work.' : (latest.result.ignited || []).length ? 'Nearby fuels still caught fire. The agent suggested improvements, but did not apply or re-test them.' : 'No ignition was observed under these conditions. This does not establish safety under other conditions.';
   }
-  paint('resultSummary', `<section class="result-card ${tone}"><span class="result-label">${label}</span><h3>${esc(title)}</h3><p>${esc(description)}</p><div class="result-metrics"><div><strong>${sceneEdits}</strong><span>Model corrections</span></div><div><strong>${summary.pendingTests ? '…' : summary.fixGroups.length}</strong><span>${summary.pendingTests ? 'Verifying fixes' : 'Fix types tested'}</span></div><div><strong>${suggestions.length}</strong><span>Report priorities</span></div></div></section>`);
+  // The takeaway answers the question directly: the honest headline (the report's, which includes the
+  // all-winds result when the swarm ran), the all-winds verdict, and the top three fixes with cost.
+  const report = state?.report;
+  const swarm = state?.agent?.type === 'swarm' && state.agent.local_check?.grid?.length ? state.agent : null;
+  if (report?.headline && state?.status === 'done') { title = report.headline; label = 'YOUR ASSESSMENT'; description = ''; }
+  const checked = swarm ? swarm.local_check.grid.length : 0, holds = swarm ? swarm.local_check.survives : 0;
+  const verdict = swarm ? `<div class="swarm-verdict ${holds === checked ? 'good' : 'bad'}"><strong>${holds}/${checked}</strong><span>wind tests hold<small>8 directions × 3 seeds</small></span><button data-open-tab="sims">See all ↗</button></div>` : '';
+  // The card's color follows the all-winds verdict when there is one, not just the single-wind test.
+  const cardTone = swarm ? (holds === checked ? 'success' : holds === 0 ? 'danger' : 'warning') : tone;
+  const top = (report?.fixes_ranked || []).slice(0, 3);
+  const fixes = top.length ? `<ol class="takeaway-fixes">${top.map((fix) => `<li><span>${esc(fixLabel(fix.title))}</span><b title="Rough relative cost">${esc(fix.cost)}</b></li>`).join('')}</ol><button class="takeaway-report" data-open-tab="report">Open the full action plan ↗</button>` : '';
+  paint('resultSummary', `<section class="result-card ${cardTone}"><span class="result-label">${label}</span><h3>${esc(title)}</h3>${description ? `<p>${esc(description)}</p>` : ''}${verdict}${top.length ? '<h4 class="takeaway-subhead">Do these first</h4>' : ''}${fixes}</section>`);
+  // With a report, the card above already lists the priorities; keep the long list only as a fallback.
+  document.querySelector('.next-steps').hidden = Boolean(top.length);
   if (previewScenario) {
     const cell = previewScenario;
     paint('resultSummary', `<section class="result-card ${cell.houseIgnitedAt === null ? 'success' : 'danger'}"><span class="result-label">SWARM SCENARIO · ${direction(cell.wind)} · SEED ${cell.seed}</span><h3>${cell.houseIgnitedAt === null ? 'No house ignition in this scenario' : `House ignited at ${esc(cell.houseIgnitedAt)}`}</h3><p>Viewing one independent swarm agent’s scenario on the current property. The action plan below belongs to the original single-wind assessment.</p></section>`);
@@ -420,12 +433,21 @@ function renderAgent() {
   $('extendedStatus').textContent = labels[extended.phase];
   $('extendedStatus').className = `pill ${extended.phase === 'complete' ? 'good' : extended.phase === 'failed' ? 'bad' : 'neutral'}`;
   paint('agentGrid', `<p>${esc(labels[extended.phase])} · <span data-extended-elapsed></span></p><button class="scenario-inline-link" data-open-tab="sims">Open 24-scenario view ↗</button>`);
-  paint('extendedMetrics', `<div><strong data-extended-elapsed></strong><span>${extended.active ? 'Elapsed time' : 'Total time'}</span></div><div><strong>${extended.checked}/24</strong><span>Locally checked</span></div><div><strong>${extended.checked ? extended.holds : '—'}</strong><span>No house ignition</span></div><div><strong>${extended.startedCount}/24</strong><span>Remote agents started</span></div>`);
+  // Results first: how many hold, which directions are weakest, the worst case, and wall time.
+  const verified = extended.cells.filter((cell) => cell.verified);
+  const byDir = WINDS.map((wind) => { const cells = verified.filter((cell) => cell.wind === wind); return { wind, n: cells.length, holds: cells.filter((cell) => cell.outcome === 'no_ignition').length }; });
+  const minHolds = Math.min(...byDir.filter((d) => d.n).map((d) => d.holds));
+  const weakest = byDir.filter((d) => d.n && d.holds === minHolds && d.holds < d.n);
+  const toSec = (t) => { const [m, sec] = t.split(':').map(Number); return m * 60 + sec; };
+  const ignitions = verified.filter((cell) => cell.houseIgnitedAt).sort((a, b) => toSec(a.houseIgnitedAt) - toSec(b.houseIgnitedAt));
+  const worst = ignitions[0];
+  const holdTone = !extended.checked ? '' : extended.holds === extended.checked ? 'good' : extended.holds === 0 ? 'bad' : 'warn';
+  paint('extendedMetrics', `<div class="${holdTone}"><strong>${extended.checked ? `${extended.holds}/${extended.checked}` : '—'}</strong><span>Wind tests hold</span></div><div><strong>${weakest.length ? weakest.map((d) => direction(d.wind)).join(', ') : extended.checked ? 'None' : '—'}</strong><span>${weakest.length ? `Weakest direction${weakest.length > 1 ? 's' : ''} (${minHolds}/3 hold)` : 'Weak directions'}</span></div><div><strong>${worst ? esc(worst.houseIgnitedAt) : extended.checked ? 'Never' : '—'}</strong><span>${worst ? `Earliest ignition · ${direction(worst.wind)} seed ${worst.seed}` : 'House ignition'}</span></div><div><strong data-extended-elapsed></strong><span>${extended.active ? 'Elapsed · 24 agents' : 'Wall time · 24 agents'}</span></div>`);
   const messages = {
     launching: 'Launching separate remote sandboxes for the 24 assigned scenarios.',
     searching: `${extended.running} agents active · ${extended.checked} locally checked · ${extended.failed} failed. Each agent tests one wind/seed against the same property.`,
     verifying: `Checking scenario results locally: ${extended.checked} of 24 recorded. Remote claims are not shown as verified results.`,
-    complete: `${extended.holds} of 24 scenarios had no house ignition at ${agent?.mph ?? state?.conditions?.mph ?? 30} mph over ${extended.duration}s. Select a cell to inspect or replay that scenario.`,
+    complete: `Each cell is one agent's scenario at ${agent?.mph ?? state?.conditions?.mph ?? 30} mph for ${extended.duration}s; times show when the house ignited. Select a cell to inspect or replay it.`,
     partial: `${extended.checked}/24 scenarios verified; ${extended.failed} agents failed. Failed cells are not passes.`,
     cancelled: 'The swarm was cancelled. Completed scenario results are preserved.',
     failed: extended.error || 'The extended test could not finish. Completed assessment results are still available below.',
@@ -435,8 +457,11 @@ function renderAgent() {
     const cell = extended.cells.find((item) => item.seed === seed && item.wind === wind);
     const selected = selectedScenario?.wind === wind && selectedScenario?.seed === seed;
     const label = cell.verified ? cell.outcome === 'no_ignition' ? 'Holds' : cell.houseIgnitedAt : cell.worker?.status || 'queued';
-    return `<td><button class="scenario-cell ${cell.outcome} ${selected ? 'selected' : ''}" data-scenario="${wind}:${seed}" ${cell.verified ? '' : 'disabled'} aria-pressed="${selected}" aria-label="Agent wind ${direction(wind)}, seed ${seed}: ${esc(label)}">${esc(label)}</button></td>`;
-  }).join('')}</tr>`).join('')}</tbody></table>`);
+    // Earlier ignition = hotter cell (90 s exposure).
+    const heat = cell.houseIgnitedAt ? Math.max(0.15, 1 - toSec(cell.houseIgnitedAt) / 90).toFixed(2) : 0;
+    return `<td><button class="scenario-cell ${cell.outcome} ${selected ? 'selected' : ''}" style="--heat:${heat}" data-scenario="${wind}:${seed}" ${cell.verified ? '' : 'disabled'} aria-pressed="${selected}" aria-label="Agent wind ${direction(wind)}, seed ${seed}: ${esc(label)}">${cell.outcome === 'no_ignition' ? '✓' : esc(label)}</button></td>`;
+  }).join('')}</tr>`).join('')}</tbody><tfoot><tr><th scope="row">Holds</th>${byDir.map((d) => `<td class="dir-total ${!d.n ? '' : d.holds === d.n ? 'good' : d.holds === 0 ? 'bad' : 'warn'}">${d.n ? `${d.holds}/${d.n}` : '—'}</td>`).join('')}</tr></tfoot></table>`);
+  renderConsensus(extended);
   const timings = [
     ['First remote agent started', extended.timings.first_agent_started_seconds],
     ['First locally verified result', extended.timings.first_result_seconds],
@@ -464,11 +489,28 @@ async function getScenarioSpec() {
   return scenarioSpecPromise;
 }
 
+// What the 24 agents converge on: their (validated, not applied) suggestions, counted across scenarios.
+function renderConsensus(extended) {
+  const votes = new Map();
+  for (const cell of extended.cells) for (const fix of cell.worker?.suggested_fixes || []) {
+    const key = `${fix.fix}:${fix.target}`;
+    const entry = votes.get(key) || { fix, count: 0, winds: new Set() };
+    entry.count += 1; entry.winds.add(direction(cell.wind)); votes.set(key, entry);
+  }
+  const ranked = [...votes.values()].sort((a, b) => b.count - a.count).slice(0, 5);
+  const failing = extended.cells.filter((cell) => cell.verified && cell.outcome === 'ignited').length;
+  paint('agentConsensus', !extended.checked ? '' : !ranked.length
+    ? `<h3>What the agents recommend next</h3><p class="section-help">${failing ? 'No new catalog fixes were suggested.' : 'Nothing: the house held in every checked scenario.'}</p>`
+    : `<h3>What the agents recommend next</h3><p class="section-help">Fixes the scenario agents suggested for the cases that still ignite, counted across agents. Suggestions only — not applied or re-tested.</p><ol class="consensus-list">${ranked.map((item) => `<li><span class="consensus-bar" style="--share:${(item.count / Math.max(1, failing)).toFixed(2)}"></span><strong>${esc(fixLabel(null, item.fix.fix))}</strong><small>${esc(String(item.fix.target))} · ${esc(CATALOG[item.fix.fix]?.cost || '')}</small><em>${item.count} agent${item.count === 1 ? '' : 's'} · ${[...item.winds].join(', ')}</em></li>`).join('')}</ol>`);
+}
+
 function renderScenarioPreviews() {
   const extended = extendedState();
   $('swarmPreviews').hidden = !extended?.isSwarm;
   if (!extended?.isSwarm) return;
-  paint('scenarioPreviews', extended.cells.map((cell) => {
+  const order = { ignited: 0, no_ignition: 2 };
+  const sorted = [...extended.cells].sort((a, b) => (order[a.outcome] ?? 1) - (order[b.outcome] ?? 1) || a.wind - b.wind || a.seed - b.seed);
+  paint('scenarioPreviews', sorted.map((cell) => {
     const key = `${cell.wind}-${cell.seed}`, image = thumbnails.get(key);
     const status = cell.verified ? cell.houseIgnitedAt === null ? 'No house ignition' : `Ignition ${cell.houseIgnitedAt}` : cell.worker?.status || 'queued';
     return `<button class="scenario-preview-card ${cell.outcome}" data-scenario="${cell.wind}:${cell.seed}" ${cell.verified ? '' : 'disabled'}><div class="scenario-preview-image"><img data-preview-image="${key}" ${image ? `src="${image.src}"` : 'hidden'} alt="Simulated scenario preview: wind ${direction(cell.wind)}, seed ${cell.seed}"><span data-preview-placeholder="${key}" ${image ? 'hidden' : ''}>${cell.verified ? thumbnailErrors.get(key) ? 'Replay unavailable' : 'Preparing replay…' : esc(status)}</span><small data-preview-time="${key}">${image ? `Preview at ${image.time}` : ''}</small></div><div class="scenario-preview-label"><strong>Agent ${direction(cell.wind)} · seed ${cell.seed}</strong><span>${esc(status)}</span><small>${cell.worker?.elapsed_seconds ? durationLabel(cell.worker.elapsed_seconds) + ' · locally checked' : cell.worker?.id ? 'Independent remote agent started' : 'Awaiting remote sandbox'}</small></div></button>`;

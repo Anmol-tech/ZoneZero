@@ -234,12 +234,29 @@ async def attach_evidence(run: Run, plan: dict):
             pass
 
 
+def swarm_summary(run: Run):
+    """Compact all-winds result for the report: pass rate, failing cases, and the fixes agents converge on."""
+    sw = run.state.get("agent")
+    if not sw or sw.get("type") != "swarm" or not sw["local_check"]["grid"]:
+        return "not run"
+    fails = [c for c in sw["local_check"]["grid"] if c["houseIgnitedAt"]]
+    votes = {}
+    for w in sw["workers"]:
+        for f in w.get("suggested_fixes", []):
+            k = f"{f['fix']} -> {f['target']}"
+            votes[k] = votes.get(k, 0) + 1
+    return {"scenarios_checked": len(sw["local_check"]["grid"]), "no_house_ignition": sw["local_check"]["survives"],
+            "ignites_in": [f"wind {c['wind']} seed {c['seed']} at {c['houseIgnitedAt']}" for c in fails][:24],
+            "fixes_suggested_by_agents": sorted(votes.items(), key=lambda kv: -kv[1])[:6]}
+
+
 async def stage_report(run: Run, before: dict, after: dict):
     await run.emit("report", "Writing the homeowner report…", "running")
     steps = [{"applied": [a["title"] for a in s["applied"]], "after": s["after"]["houseIgnitedAt"] or "survives"} for s in run.state["fix_rounds"]]
     rep, _ = await asyncio.to_thread(g.ask_json, [g.text(P.REPORT.format(
         summary=(run.inventory or {}).get("summary", "demo property"), winds=f"{run.wind}° at {run.mph} mph",
-        before=json.dumps(before["result"]), steps=json.dumps(steps), after=json.dumps(after["result"]), catalog=json.dumps(CATALOG)))],
+        before=json.dumps(before["result"]), steps=json.dumps(steps), after=json.dumps(after["result"]), catalog=json.dumps(CATALOG),
+        swarm=json.dumps(swarm_summary(run))))],
         model=g.FLASH, thinking="low")
     run.state["report"] = rep
     await run.emit("report", rep.get("headline", "Report ready"), "done", report=rep)
@@ -267,6 +284,12 @@ async def run_pipeline(run: Run, video_src: Path | None):
         run.state["base_spec"] = base_n
         _, before, after = await stage_mitigate(run)
         run.state["final_spec"] = len(run.state["spec_versions"]) - 1
+        if run.state.get("swarm_default"):
+            # All-winds check before the report, so the report speaks to every direction, not just one.
+            from swarm import run_swarm
+            t = time.time()
+            await run_swarm(run)
+            run.state.setdefault("timings", {})["swarm_seconds"] = round(time.time() - t, 1)
         await stage_report(run, before, after)
         run.state["status"] = "done"
         await run.emit("done", "Pipeline complete", "done")

@@ -176,7 +176,10 @@ Wind tested: {winds}
 Original run: {before}
 Fixes applied, in order, with verified effect: {steps}
 Final run: {after}
+All-winds check (24 agents, 8 directions x 3 seeds, on the final property): {swarm}
 Catalog (for cost bands): {catalog}
+If the all-winds check ran, the headline must reflect it honestly (e.g. "holds in 7 of 24 wind conditions"), and rank the
+fixes the agents converged on for the directions that still ignite.
 
 Return ONLY JSON:
 {{"headline": "one sentence",
