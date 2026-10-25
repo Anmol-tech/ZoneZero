@@ -5,9 +5,9 @@
 Built at the Gemini 4 Argon SF Hackathon (Oct 25, 2026). Track 2: More Dimensions, plus the Managed Agents side prize.
 
 ## Demo video
-[![Watch the 60-second ZoneZero demo](docs/zonezero-demo-poster.jpg)](docs/zonezero-demo.mp4)
+[![Watch the 60-second ZoneZero demo on YouTube](docs/zonezero-demo-poster.jpg)](https://youtu.be/bqaZV62ik94)
 
-**[▶ Play the 60-second demo](docs/zonezero-demo.mp4)**
+**[▶ Watch the 60-second demo on YouTube](https://youtu.be/bqaZV62ik94)**
 
 ## Who it's for
 A homeowner in a California fire zone who just got an insurance non-renewal letter. IBHS research finds most homes lost in wildfires are ignited by **embers**, through small details near the house: gutters, vents, fences, mulch, firewood. California's **Zone 0** rules target the first 5 ft around the home. ZoneZero shows *this* home's ignition chain and the cheapest fixes that break it.
