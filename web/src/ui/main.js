@@ -5,8 +5,8 @@ import { Sim, fmtTime } from '../sim/embers.js';
 import { CATALOG } from '../sim/mitigations.js';
 import { createKit } from '../kit/spec.js';
 import { PHASES, assessmentSummary, phaseStates } from './assessment.js';
-import { computeMarkers, projectMarkers } from '../render/markers.js';
-import { drawMarkers } from '../render/views.js';
+import { computeMarkers, groupMarkers, projectPins } from '../render/markers.js';
+import { drawPins } from '../render/views.js';
 import demoScene from '../../../samples/demo_scene.js?raw';
 
 const $ = (id) => document.getElementById(id);
@@ -57,10 +57,16 @@ controls.target.set(0, 5, 0);
 controls.enableDamping = true;
 let scene = new THREE.Scene(), built = null, spec = null, sim = null, simView = null, acc = 0, last = performance.now();
 // Hazard (red) / fix (green) labels drawn on a 2D overlay above the 3D view.
-let markers = [], showLabels = true;
+let groups = [], pins = [], labelFilter = 'all', hoverKey = null, legendKey = null, flight = null;
+// The legend starts minimized; the viewer's choice is remembered on this device.
+let legendOpen = false;
+try { legendOpen = localStorage.getItem('zz.legendOpen') === '1'; } catch { /* storage unavailable */ }
 const overlay = document.createElement('canvas');
 overlay.className = 'label-overlay';
 vp.appendChild(overlay);
+const legend = document.createElement('div');
+legend.className = 'pin-legend';
+vp.appendChild(legend);
 function resize() {
   const rect = vp.getBoundingClientRect();
   if (!rect.width || !rect.height) return;
@@ -83,7 +89,7 @@ function showSpec(next, illustrative = false) {
   materials.forEach((material) => material.dispose());
   spec = next;
   scene = new THREE.Scene(); addLights(scene); built = buildScene(next); scene.add(built.root);
-  markers = computeMarkers(next);
+  groups = groupMarkers(computeMarkers(next)); renderLegend();
   const viewpoint = next.cameras?.[0];
   if (viewpoint) { camera.position.set(...viewpoint.pos); controls.target.set(...viewpoint.lookAt); }
   $('simStatus').textContent = illustrative ? 'Illustrative property · not generated from footage' : `${next.objects.length} scene objects · ${next.cameras.length} camera views`;
@@ -100,6 +106,7 @@ function animate(now) {
       $('simStatus').textContent = `Preview ${fmtTime(sim.t)} · ` + (sim.houseIgnitedAt !== null ? `House ignited at ${fmtTime(sim.houseIgnitedAt)}` : sim.done ? 'No house ignition in this preview' : 'No house ignition yet');
       if (sim.done) $('play').innerHTML = '<span aria-hidden="true">↻</span> Replay ember test';
     }
+    if (flight) stepFlight(dt);
     controls.update(); renderer.render(scene, camera);
     drawLabels();
   }
@@ -109,12 +116,58 @@ function drawLabels() {
   const ctx = overlay.getContext('2d');
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, overlay.width, overlay.height);
-  if (!showLabels || !markers.length) return;
+  pins = [];
+  if (labelFilter === 'off' || !groups.length) return;
   ctx.scale(devicePixelRatio, devicePixelRatio);
   const w = overlay.width / devicePixelRatio, h = overlay.height / devicePixelRatio;
-  drawMarkers(ctx, projectMarkers(markers, camera, w, h, THREE, 12), sim && sim.t > 6 ? 0.6 : 1);
+  pins = projectPins(groups, camera, w, h, THREE, labelFilter, built?.byObj.get('house'));
+  drawPins(ctx, pins, { highlight: hoverKey || legendKey, alpha: sim && sim.t > 6 && !sim.done ? 0.7 : 1 });
 }
-$('labels').onclick = () => { showLabels = !showLabels; $('labels').classList.toggle('on', showLabels); };
+// Legend: one row per hazard/fix type, numbered to match the pins in the view.
+function renderLegend() {
+  const shown = groups.filter((g) => labelFilter === 'all' || g.type === labelFilter);
+  const risks = groups.filter((g) => g.type === 'risk').length, fixes = groups.length - risks;
+  legend.hidden = !groups.length || labelFilter === 'off';
+  legend.classList.toggle('open', legendOpen);
+  legend.innerHTML = `<button class="pin-legend-head" aria-expanded="${legendOpen}" title="${legendOpen ? 'Minimize' : 'Show the list'}"><span class="pin-legend-summary">${risks ? `<b class="risk">${risks}</b> hazard${risks === 1 ? '' : 's'}` : 'No hazards'}${fixes ? ` · <b class="fix">${fixes}</b> fix${fixes === 1 ? '' : 'es'}` : ''}</span><span class="pin-legend-toggle" aria-hidden="true">${legendOpen ? '▴' : '▾'}</span></button>
+    ${legendOpen ? '<p class="pin-legend-hint">Hover to find · click to zoom</p>' : ''}<ol ${legendOpen ? '' : 'hidden'}>${shown.map((g) => `<li data-key="${esc(g.key)}" class="${g.type}"><i>${g.type === 'fix' ? '✓' : g.n}</i><span>${esc(g.label)}</span>${g.positions.length > 1 ? `<small>×${g.positions.length}</small>` : ''}</li>`).join('')}</ol>`;
+}
+legend.addEventListener('pointerover', (event) => { const row = event.target.closest('li[data-key]'); legendKey = row?.dataset.key || null; });
+legend.addEventListener('pointerleave', () => { legendKey = null; });
+legend.addEventListener('click', (event) => {
+  if (event.target.closest('.pin-legend-head')) {
+    legendOpen = !legendOpen;
+    try { localStorage.setItem('zz.legendOpen', legendOpen ? '1' : '0'); } catch { /* storage unavailable */ }
+    renderLegend(); return;
+  }
+  const row = event.target.closest('li[data-key]'); if (!row) return;
+  const g = groups.find((item) => item.key === row.dataset.key); if (!g) return;
+  // Fly to the first location of this hazard/fix, keeping the current viewing direction.
+  const target = new THREE.Vector3(...g.positions[0]);
+  const offset = camera.position.clone().sub(controls.target).setLength(45);
+  flight = { t: 0, fromPos: camera.position.clone(), fromTarget: controls.target.clone(), toPos: target.clone().add(offset), toTarget: target };
+});
+function stepFlight(dt) {
+  flight.t = Math.min(1, flight.t + dt / 0.7);
+  const k = flight.t < 0.5 ? 2 * flight.t * flight.t : 1 - (-2 * flight.t + 2) ** 2 / 2;
+  camera.position.lerpVectors(flight.fromPos, flight.toPos, k);
+  controls.target.lerpVectors(flight.fromTarget, flight.toTarget, k);
+  if (flight.t >= 1) flight = null;
+}
+vp.addEventListener('pointermove', (event) => {
+  const rect = vp.getBoundingClientRect(), x = event.clientX - rect.left, y = event.clientY - rect.top;
+  const hit = pins.find((p) => Math.hypot(p.x - x, p.y - y) < 12);
+  hoverKey = hit?.key || null;
+  legend.querySelectorAll('li').forEach((row) => row.classList.toggle('hot', row.dataset.key === hoverKey));
+  vp.style.cursor = hit ? 'pointer' : '';
+});
+const FILTERS = [['all', 'All labels'], ['risk', 'Hazards only'], ['fix', 'Fixes only'], ['off', 'Labels off']];
+$('labels').onclick = () => {
+  labelFilter = FILTERS[(FILTERS.findIndex(([key]) => key === labelFilter) + 1) % FILTERS.length][0];
+  $('labels').innerHTML = `<span aria-hidden="true">⚑</span> ${FILTERS.find(([key]) => key === labelFilter)[1]}`;
+  $('labels').classList.toggle('on', labelFilter !== 'off');
+  renderLegend();
+};
 // Flip between the original property and the latest hardened version, keeping the camera still.
 let showingBase = false;
 $('beforeAfter').onclick = async () => {

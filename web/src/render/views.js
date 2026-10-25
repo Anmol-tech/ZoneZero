@@ -14,22 +14,83 @@ export function overviewCamera(spec, windFrom, aspect, orbitDeg = 0) {
   return cam;
 }
 
-// Pill labels for hazards (red) and fixes (green), drawn onto a 2D canvas.
-export function drawMarkers(ctx, labels, alpha = 1) {
+const PIN = { risk: "#d63a1c", fix: "#17855a" };
+
+// Small numbered pins at hazard/fix locations. The highlighted group also gets
+// its full label beside each of its pins.
+export function drawPins(ctx, pins, { highlight = null, alpha = 1 } = {}) {
   ctx.save();
   ctx.globalAlpha = alpha;
-  ctx.font = "600 15px system-ui, sans-serif";
-  for (const l of labels) {
-    const w = ctx.measureText(l.text).width + 16, h = 24;
-    const x = Math.min(Math.max(4, l.x - w / 2), ctx.canvas.width - w - 4), y = l.y - h / 2;
-    const col = l.type === "fix" ? "rgba(22,120,70,0.92)" : "rgba(190,40,20,0.92)";
-    // Leader line from the label to the object it points at.
-    ctx.strokeStyle = col; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(l.x, y + h); ctx.lineTo(l.ax, l.ay); ctx.stroke();
-    ctx.fillStyle = col; ctx.beginPath(); ctx.arc(l.ax, l.ay, 3.5, 0, Math.PI * 2); ctx.fill();
-    ctx.beginPath(); ctx.roundRect(x, y, w, h, 12); ctx.fill();
-    ctx.fillStyle = "#fff"; ctx.fillText(l.text, x + 8, y + 17);
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  // Draw the highlighted group last so it sits on top.
+  const ordered = [...pins].sort((a, b) => (a.key === highlight) - (b.key === highlight));
+  for (const p of ordered) {
+    const hot = p.key === highlight, r = hot ? 12 : p.behind ? 6 : 9;
+    ctx.globalAlpha = (highlight && !hot ? 0.45 : 1) * (p.behind && !hot ? 0.35 : 1) * alpha;
+    ctx.shadowColor = "rgba(0,0,0,0.45)"; ctx.shadowBlur = 4;
+    ctx.fillStyle = PIN[p.type];
+    ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.lineWidth = 2; ctx.strokeStyle = "#fff"; ctx.stroke();
+    ctx.fillStyle = "#fff"; ctx.font = `700 ${hot ? 12 : 10}px system-ui, sans-serif`;
+    if (!p.behind || hot) ctx.fillText(p.type === "fix" ? "✓" : String(p.n), p.x, p.y + 0.5);
+    if (hot) {
+      ctx.font = "600 12px system-ui, sans-serif"; ctx.textAlign = "left";
+      const text = p.label, w = ctx.measureText(text).width + 14;
+      const x = Math.min(p.x + 16, ctx.canvas.width / (window.devicePixelRatio || 1) - w - 4);
+      ctx.fillStyle = "rgba(14,18,22,0.88)";
+      ctx.beginPath(); ctx.roundRect(x, p.y - 11, w, 22, 6); ctx.fill();
+      ctx.fillStyle = "#fff"; ctx.fillText(text, x + 7, p.y + 0.5);
+      ctx.textAlign = "center";
+    }
   }
+  ctx.restore();
+}
+
+// Minimized legend for recorded videos: just the hazard / fix counts.
+export function drawLegendChip(ctx, groups, x, yBottom) {
+  const risks = groups.filter((g) => g.type === "risk").length, fixes = groups.length - risks;
+  const parts = [[risks, "risk", `hazard${risks === 1 ? "" : "s"}`], [fixes, "fix", `fix${fixes === 1 ? "" : "es"}`]].filter(([n]) => n);
+  if (!parts.length) return;
+  ctx.save();
+  ctx.font = "600 12px system-ui, sans-serif"; ctx.textBaseline = "middle";
+  const w = parts.reduce((sum, [n, , word]) => sum + 30 + ctx.measureText(`${n} ${word}`).width, 10);
+  const h = 26, y = yBottom - h;
+  ctx.fillStyle = "rgba(14,18,22,0.78)"; ctx.beginPath(); ctx.roundRect(x, y, w, h, 13); ctx.fill();
+  let cx = x + 10;
+  for (const [n, type, word] of parts) {
+    ctx.fillStyle = PIN[type]; ctx.beginPath(); ctx.arc(cx + 7, y + h / 2, 7, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#fff"; ctx.textAlign = "center"; ctx.font = "700 9px system-ui, sans-serif"; ctx.fillText(type === "fix" ? "✓" : "!", cx + 7, y + h / 2 + 0.5);
+    ctx.textAlign = "left"; ctx.font = "600 12px system-ui, sans-serif"; ctx.fillText(`${n} ${word}`, cx + 18, y + h / 2 + 0.5);
+    cx += 30 + ctx.measureText(`${n} ${word}`).width;
+  }
+  ctx.restore();
+}
+
+// Compact legend panel for recorded videos (the live viewer uses an HTML legend).
+export function drawLegend(ctx, groups, x, yBottom, alpha = 1) {
+  const rows = groups.slice(0, 9);
+  const more = groups.length - rows.length;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.font = "600 12px system-ui, sans-serif";
+  const lineH = 19, pad = 8;
+  const w = Math.max(...rows.map((g) => ctx.measureText(`${g.label}${g.positions.length > 1 ? `  ×${g.positions.length}` : ""}`).width), 80) + 40;
+  const h = rows.length * lineH + pad * 2 + (more > 0 ? lineH : 0);
+  const y0 = yBottom - h;
+  ctx.fillStyle = "rgba(14,18,22,0.78)";
+  ctx.beginPath(); ctx.roundRect(x, y0, w, h, 8); ctx.fill();
+  rows.forEach((g, i) => {
+    const cy = y0 + pad + i * lineH + lineH / 2;
+    ctx.fillStyle = PIN[g.type];
+    ctx.beginPath(); ctx.arc(x + 16, cy, 7, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "#fff"; ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.font = "700 9px system-ui, sans-serif"; ctx.fillText(g.type === "fix" ? "✓" : String(g.n), x + 16, cy + 0.5);
+    ctx.textAlign = "left"; ctx.font = "600 12px system-ui, sans-serif";
+    ctx.fillText(g.label, x + 30, cy + 0.5);
+    if (g.positions.length > 1) { ctx.fillStyle = "#9fb0ba"; ctx.fillText(`×${g.positions.length}`, x + 34 + ctx.measureText(g.label).width, cy + 0.5); }
+  });
+  if (more > 0) { ctx.fillStyle = "#9fb0ba"; ctx.fillText(`+${more} more`, x + 30, y0 + pad + rows.length * lineH + lineH / 2); }
   ctx.restore();
 }
 

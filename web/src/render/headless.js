@@ -3,8 +3,8 @@
 import * as THREE from "three";
 import { buildScene, addLights, SimView, configureRenderer } from "./build3d.js";
 import { Sim } from "../sim/embers.js";
-import { overviewCamera, drawHud, drawMarkers } from "./views.js";
-import { computeMarkers, projectMarkers } from "./markers.js";
+import { overviewCamera, drawHud, drawPins, drawLegend, drawLegendChip } from "./views.js";
+import { computeMarkers, groupMarkers, projectPins } from "./markers.js";
 
 const W = 960, H = 540;
 const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
@@ -24,10 +24,12 @@ function fresh(spec) {
   return { scene, built };
 }
 
-function snapshot(text, labels, labelAlpha = 1) {
+// The full legend shows while the scene is introduced, then minimizes to a count chip.
+function snapshot(text, pins, groups, labelAlpha = 1, fullLegend = true) {
   const ctx = out.getContext("2d");
   ctx.drawImage(renderer.domElement, 0, 0);
-  if (labels?.length) drawMarkers(ctx, labels, labelAlpha);
+  if (pins?.length) drawPins(ctx, pins, { alpha: labelAlpha });
+  if (groups?.length) fullLegend ? drawLegend(ctx, groups, 12, H - 12, 0.95) : drawLegendChip(ctx, groups, 12, H - 12);
   if (text) { drawHud(hud, text); ctx.drawImage(hud, 0, 0); }
   return out.toDataURL("image/jpeg", 0.72);
 }
@@ -47,7 +49,7 @@ window.ZZ = {
     const { scene, built } = fresh(spec);
     const sim = new Sim(spec, opts);
     const view = new SimView(scene, built, sim);
-    const markers = computeMarkers(spec);
+    const groups = groupMarkers(computeMarkers(spec));
     const frames = [];
     const total = Math.ceil(sim.opts.duration / (sim.opts.dt * every));
     let i = 0, f = 0;
@@ -59,7 +61,7 @@ window.ZZ = {
         view.update(1 / fps);
         renderer.render(scene, cam);
         const labelAlpha = sim.t < 6 ? 1 : 0.55;
-        frames.push(snapshot(hudLines(sim, opts.label), projectMarkers(markers, cam, W, H, THREE), labelAlpha));
+        frames.push(snapshot(hudLines(sim, opts.label), projectPins(groups, cam, W, H, THREE, "all", built.byObj.get("house")), groups, labelAlpha, sim.t < 5));
         f++;
       }
     }

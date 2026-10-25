@@ -56,37 +56,51 @@ export function computeMarkers(spec) {
   for (const [wall] of Object.entries(h.sidingOverride || {})) { const [x, z] = wallPoint(h, wall, 0, 1); add("house", [x, h.h * 0.6, z], "✓ Fiber-cement siding", "fix"); }
   if ((spec.fixed || []).some((f) => f.fix === "class_a_roof")) add("house", [0, h.h + 9, 0], "✓ Class A roof", "fix");
   for (const r of spec.removed || []) add("removed", [r.x, 2, r.z], `✓ Removed ${r.label}`, "fix");
-  // Avoid a wall of identical labels: keep at most 2 of each text.
-  const seen = new Map();
-  return out.filter((m) => { const k = m.text; seen.set(k, (seen.get(k) || 0) + 1); return seen.get(k) <= 2; });
+  return out;
 }
 
-// Projects markers to 2D for a camera; returns [{x, y, text, type}] in pixels.
-// Projects markers to 2D and lays them out without overlaps (nudging up/down,
-// dropping what can't fit). Returns [{x, y, ax, ay, text, type}] in pixels.
-export function projectMarkers(markers, camera, width, height, THREE, max = 9) {
-  const v = new THREE.Vector3();
-  const pts = [];
+// Groups markers that say the same thing into numbered legend entries:
+// hazards first (1, 2, …), then fixes. Each group keeps all its 3D positions.
+export function groupMarkers(markers) {
+  const groups = new Map();
   for (const m of markers) {
-    v.set(...m.pos).project(camera);
-    if (v.z > 1 || v.z < -1 || Math.abs(v.x) > 1.05 || Math.abs(v.y) > 1.05) continue;
-    pts.push({ ax: (v.x * 0.5 + 0.5) * width, ay: (-v.y * 0.5 + 0.5) * height, text: m.text, type: m.type, id: m.id });
+    const label = m.text.replace(/^[⚠✓]\s*/, "");
+    const key = `${m.type}:${label}`;
+    if (!groups.has(key)) groups.set(key, { key, label, type: m.type, positions: [] });
+    groups.get(key).positions.push(m.pos);
   }
-  pts.sort((a, b) => a.ay - b.ay);
-  const placed = [];
-  const W = (t) => t.length * 8 + 18, H = 24;
-  // Rectangles: placed label spans [p.x - p.w/2, p.x + p.w/2] x [p.y - H/2, p.y + H/2]; candidate likewise.
-  const hit = (x, y, w) => placed.some((p) => x < p.x + p.w / 2 + 6 && x + w > p.x - p.w / 2 - 6 && Math.abs(y - p.y) < H + 4);
-  for (const p of pts) {
-    if (placed.length >= max) break;
-    const w = W(p.text);
-    for (const dy of [0, -30, 30, -60, 60, -90]) {
-      const y = p.ay - 22 + dy, x = p.ax - w / 2;
-      if (y < 60 || y > height - 10) continue;
-      if (!hit(x, y, w)) { placed.push({ ...p, x: p.ax, y, w }); break; }
+  const list = [...groups.values()].sort((a, b) => (a.type === b.type ? 0 : a.type === "risk" ? -1 : 1));
+  list.forEach((g, i) => { g.n = i + 1; });
+  return list;
+}
+
+// Projects every pin of every group to screen pixels; pins of one group that land
+// within a few pixels of each other are merged. Returns [{x, y, n, type, key}].
+// `occluders` (e.g. the house meshes) mark pins behind them as `behind`, drawn faint.
+export function projectPins(groups, camera, width, height, THREE, filter = "all", occluders = null) {
+  const v = new THREE.Vector3();
+  const pins = [];
+  const ray = occluders ? new THREE.Raycaster() : null;
+  const dir = new THREE.Vector3();
+  for (const g of groups) {
+    if (filter !== "all" && g.type !== filter) continue;
+    for (const pos of g.positions) {
+      v.set(...pos).project(camera);
+      if (v.z > 1 || v.z < -1 || Math.abs(v.x) > 1.02 || Math.abs(v.y) > 1.02) continue;
+      const x = (v.x * 0.5 + 0.5) * width, y = (-v.y * 0.5 + 0.5) * height;
+      if (pins.some((p) => p.key === g.key && Math.hypot(p.x - x, p.y - y) < 14)) continue;
+      let behind = false;
+      if (ray) {
+        const p = new THREE.Vector3(...pos);
+        const dist = dir.copy(p).sub(camera.position).length();
+        ray.set(camera.position, dir.normalize());
+        ray.far = dist - 1.5;
+        behind = ray.intersectObjects(occluders, true).length > 0;
+      }
+      pins.push({ x, y, n: g.n, type: g.type, key: g.key, label: g.label, behind });
     }
   }
-  return placed;
+  return pins;
 }
 
 export { wallLength };
