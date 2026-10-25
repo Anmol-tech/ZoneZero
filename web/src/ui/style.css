@@ -754,3 +754,9 @@ main.layout { max-width: 1680px; grid-template-columns: 250px minmax(0, 1fr) 460
 .scenario-chip span.on { color: var(--ink); font-weight: 700; }
 .replay-pair { display: flex; gap: 8px; flex-wrap: wrap; }
 #viewport .scenario-chip { top: 60px; }
+/* Light-theme overlay while the model is being built (the old dark background hid the dark text). */
+.model-waiting { background: rgba(245, 244, 239, .92); }
+.model-waiting strong { color: var(--ink); font-weight: 600; }
+.model-waiting span { color: var(--ink-2); }
+.model-waiting::before { content: ""; width: 28px; height: 28px; border-radius: 50%; border: 3px solid var(--line-2); border-top-color: var(--forest); animation: zzspin 0.9s linear infinite; }
+@keyframes zzspin { to { transform: rotate(360deg); } }
