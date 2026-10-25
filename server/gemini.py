@@ -36,15 +36,21 @@ def image(path: Path) -> dict:
     return {"type": "image", "data": base64.b64encode(Path(path).read_bytes()).decode(), "mime_type": mime}
 
 
-def video(path: Path) -> dict:
+def video(path: Path, *, resolution: str | None = None, agentic: bool = False) -> dict:
+    """agentic=True lets Argon scrub timestamps and zoom into high-res frames on its own."""
     path = Path(path)
+    extra = {}
+    if resolution:
+        extra["resolution"] = resolution
+    if agentic:
+        extra["processing"] = "agentic"
     if path.stat().st_size <= INLINE_LIMIT:
-        return {"type": "video", "data": base64.b64encode(path.read_bytes()).decode(), "mime_type": "video/mp4"}
+        return {"type": "video", "data": base64.b64encode(path.read_bytes()).decode(), "mime_type": "video/mp4", **extra}
     f = client().files.upload(file=str(path))
     while getattr(f, "state", None) and str(f.state).upper().endswith("PROCESSING"):
         time.sleep(2)
         f = client().files.get(name=f.name)
-    return {"type": "video", "uri": f.uri, "mime_type": "video/mp4"}
+    return {"type": "video", "uri": f.uri, "mime_type": "video/mp4", **extra}
 
 
 def ask(parts: list, *, model: str = ARGON, thinking: str = "medium", system: str | None = None,

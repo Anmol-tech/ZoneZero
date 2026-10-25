@@ -46,8 +46,8 @@ def _ff(*args):
 
 
 def prepare_video(src: Path, dst: Path):
-    """480p / 15 fps keeps a 2-minute walk-around small enough to send inline."""
-    _ff("-i", src, "-vf", "scale=-2:480,fps=15", "-c:v", "libx264", "-crf", "30", "-preset", "veryfast",
+    """720p / 15 fps: enough detail for gutters and vents, still small enough to send inline for short clips."""
+    _ff("-i", src, "-vf", "scale=-2:720,fps=15", "-c:v", "libx264", "-crf", "30", "-preset", "veryfast",
         "-c:a", "aac", "-b:a", "48k", "-movflags", "+faststart", dst)
 
 
@@ -118,7 +118,7 @@ class Renderer:
         frame_dir.mkdir(parents=True, exist_ok=True)
         for i, d in enumerate(rec["frames"]):
             (frame_dir / f"f{i:04d}.jpg").write_bytes(base64.b64decode(d.split(",", 1)[1]))
-        await asyncio.to_thread(frames_to_mp4, frame_dir, out_mp4)
+        await asyncio.to_thread(frames_to_mp4, frame_dir, out_mp4, rec.get("fps", 15))
         return rec["result"]
 
     async def close(self):

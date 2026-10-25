@@ -154,6 +154,27 @@ export function boardsTexture(color, vertical = true) {
   }, true);
 }
 
+// Fine metal mesh (vent screens, gutter guards).
+export function meshTexture() {
+  return tex("mesh", () => {
+    const [c, ctx] = canvas(64, 64);
+    ctx.fillStyle = "#c9d0d4"; ctx.fillRect(0, 0, 64, 64);
+    ctx.fillStyle = "#4b5459";
+    for (let y = 2; y < 64; y += 6) for (let x = (y / 6) % 2 ? 2 : 5; x < 64; x += 6) ctx.fillRect(x, y, 2.5, 2.5);
+    return c;
+  }, true);
+}
+
+export function latticeTexture() {
+  return tex("lattice", () => {
+    const [c, ctx] = canvas(128, 128);
+    ctx.fillStyle = "#3a3632"; ctx.fillRect(0, 0, 128, 128);
+    ctx.strokeStyle = "#d8d2c4"; ctx.lineWidth = 5;
+    for (let i = -128; i < 256; i += 22) { ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i + 128, 128); ctx.stroke(); ctx.beginPath(); ctx.moveTo(i + 128, 0); ctx.lineTo(i, 128); ctx.stroke(); }
+    return c;
+  }, true);
+}
+
 export function skyTexture() {
   return tex("sky", () => {
     const [c, ctx] = canvas(4, 256);

@@ -5,6 +5,8 @@ import { Sim, fmtTime } from '../sim/embers.js';
 import { CATALOG } from '../sim/mitigations.js';
 import { createKit } from '../kit/spec.js';
 import { PHASES, assessmentSummary, phaseStates } from './assessment.js';
+import { computeMarkers, projectMarkers } from '../render/markers.js';
+import { drawMarkers } from '../render/views.js';
 import demoScene from '../../../samples/demo_scene.js?raw';
 
 const $ = (id) => document.getElementById(id);
@@ -24,7 +26,7 @@ const FIX_LABELS = {
   move_firewood: 'Move firewood away from the house', enclose_deck: 'Clear and enclose the deck underside',
   clear_deck_items: 'Move combustible patio items', class_a_roof: 'Upgrade to a Class A roof',
   trim_trees: 'Trim trees close to the house', zone1_trees: 'Thin and limb up nearby trees',
-  zone1_mulch: 'Replace bark mulch within 5–30 feet',
+  zone1_mulch: 'Replace bark mulch within 5–30 feet', noncombustible_siding: 'Re-side the exposed wall with fiber cement',
 };
 const fixLabel = (title, id) => FIX_LABELS[id || Object.keys(CATALOG).find((key) => CATALOG[key].title.toLowerCase().trim() === title?.toLowerCase().trim())] || title;
 let runId = null, state = null, eventSource = null, epoch = 0, loading = false;
@@ -54,10 +56,17 @@ const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.set(0, 5, 0);
 controls.enableDamping = true;
 let scene = new THREE.Scene(), built = null, spec = null, sim = null, simView = null, acc = 0, last = performance.now();
+// Hazard (red) / fix (green) labels drawn on a 2D overlay above the 3D view.
+let markers = [], showLabels = true;
+const overlay = document.createElement('canvas');
+overlay.className = 'label-overlay';
+vp.appendChild(overlay);
 function resize() {
   const rect = vp.getBoundingClientRect();
   if (!rect.width || !rect.height) return;
   renderer.setSize(rect.width, rect.height);
+  overlay.width = rect.width * devicePixelRatio; overlay.height = rect.height * devicePixelRatio;
+  overlay.style.width = `${rect.width}px`; overlay.style.height = `${rect.height}px`;
   camera.aspect = rect.width / rect.height;
   camera.updateProjectionMatrix();
 }
@@ -74,6 +83,7 @@ function showSpec(next, illustrative = false) {
   materials.forEach((material) => material.dispose());
   spec = next;
   scene = new THREE.Scene(); addLights(scene); built = buildScene(next); scene.add(built.root);
+  markers = computeMarkers(next);
   const viewpoint = next.cameras?.[0];
   if (viewpoint) { camera.position.set(...viewpoint.pos); controls.target.set(...viewpoint.lookAt); }
   $('simStatus').textContent = illustrative ? 'Illustrative property · not generated from footage' : `${next.objects.length} scene objects · ${next.cameras.length} camera views`;
@@ -86,14 +96,39 @@ function animate(now) {
     if (sim && !sim.done) {
       acc += dt * 3;
       while (acc >= sim.opts.dt && !sim.done) { sim.step(); acc -= sim.opts.dt; }
-      simView.update();
+      simView.update(dt);
       $('simStatus').textContent = `Preview ${fmtTime(sim.t)} · ` + (sim.houseIgnitedAt !== null ? `House ignited at ${fmtTime(sim.houseIgnitedAt)}` : sim.done ? 'No house ignition in this preview' : 'No house ignition yet');
       if (sim.done) $('play').innerHTML = '<span aria-hidden="true">↻</span> Replay ember test';
     }
     controls.update(); renderer.render(scene, camera);
+    drawLabels();
   }
   requestAnimationFrame(animate);
 }
+function drawLabels() {
+  const ctx = overlay.getContext('2d');
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, overlay.width, overlay.height);
+  if (!showLabels || !markers.length) return;
+  ctx.scale(devicePixelRatio, devicePixelRatio);
+  const w = overlay.width / devicePixelRatio, h = overlay.height / devicePixelRatio;
+  drawMarkers(ctx, projectMarkers(markers, camera, w, h, THREE, 12), sim && sim.t > 6 ? 0.6 : 1);
+}
+$('labels').onclick = () => { showLabels = !showLabels; $('labels').classList.toggle('on', showLabels); };
+// Flip between the original property and the latest hardened version, keeping the camera still.
+let showingBase = false;
+$('beforeAfter').onclick = async () => {
+  if (!state || state.base_spec === undefined) return;
+  showingBase = !showingBase;
+  const n = showingBase ? state.base_spec : state.spec_versions.at(-1).n;
+  const cam = camera.position.clone(), target = controls.target.clone();
+  try {
+    showSpec(await api(`/api/runs/${runId}/spec/${n}`));
+    $('version').value = n;
+    camera.position.copy(cam); controls.target.copy(target);
+    $('beforeAfter').innerHTML = showingBase ? '<span aria-hidden="true">⇄</span> Showing before' : '<span aria-hidden="true">⇄</span> Showing after';
+  } catch (error) { notify(error.message); }
+};
 $('play').onclick = () => {
   if (!spec) return;
   const selectedSpec = spec; showSpec(selectedSpec, !runId);
@@ -170,6 +205,7 @@ function setBusy() {
   for (const id of ['start', 'sample', 'illustrative']) $(id).disabled = busy;
   const ready = state?.status === 'done';
   $('windTest').disabled = !ready; $('agent').disabled = !ready;
+  $('beforeAfter').disabled = !(state?.base_spec !== undefined && state.spec_versions.at(-1)?.n > state.base_spec);
 }
 async function start(mode) {
   const data = new FormData();
@@ -258,17 +294,28 @@ function renderActivity() {
     const group = allEvents.filter((event) => phase.stages.includes(event.stage) || (index === statuses.findIndex((status) => status === 'error') && event.stage === 'error'));
     let extra = '';
     if (index === 1 && corrections.length) extra = `<div class="raw-event"><strong>What was corrected in the scene</strong><ul>${corrections.map((issue) => `<li>${esc(issue.fix || issue.problem)}</li>`).join('')}</ul></div>`;
-    const raw = group.map((event) => `<div class="raw-event">${esc(event.msg)}${event.plan ? `<ul>${(event.plan.fixes || []).map((fix) => `<li>${esc(CATALOG[fix.fix]?.title || fix.fix)}: ${esc(fix.why)}</li>`).join('')}</ul>` : ''}${event.errors ? `<pre>${esc(event.errors.join('\n'))}</pre>` : ''}${event.trace ? `<pre>${esc(event.trace)}</pre>` : ''}</div>`).join('');
+    const raw = group.map((event) => `<div class="raw-event">${esc(event.msg)}${event.plan ? `<ul>${(event.plan.fixes || []).map((fix) => `<li>${esc(CATALOG[fix.fix]?.title || fix.fix)}: ${esc(fix.why)}${evidence(fix)}</li>`).join('')}</ul>` : ''}${event.errors ? `<pre>${esc(event.errors.join('\n'))}</pre>` : ''}${event.trace ? `<pre>${esc(event.trace)}</pre>` : ''}</div>`).join('');
     return `<li class="phase ${statuses[index]}"><span class="phase-dot">${statuses[index] === 'complete' ? '✓' : index + 1}</span><h4>${esc(phase.title)}</h4><p>${esc(stories[index])}</p>${group.length ? `<details><summary>${group.length} event${group.length === 1 ? '' : 's'} · view details</summary>${extra}${raw}</details>` : ''}</li>`;
   }).join(''));
 }
+// The real footage frame Argon cited as proof of a hazard; click it to seek the video.
+function evidence(item) {
+  if (!item.evidence_frame && !item.evidence) return '';
+  return `<div class="evidence">${item.evidence_frame ? `<img src="${esc(item.evidence_frame)}" data-seek="${esc(item.seen_in_video_at || '')}" alt="Footage at ${esc(item.seen_in_video_at)}" loading="lazy">` : ''}<span>Seen in footage ${esc(item.seen_in_video_at || '')} · ${esc(item.evidence || '')}</span></div>`;
+}
+document.addEventListener('click', (event) => {
+  const img = event.target.closest('.evidence img[data-seek], .evrow img[data-seek]');
+  if (!img || !img.dataset.seek) return;
+  const [minutes, seconds] = img.dataset.seek.split(':').map(Number);
+  $('player').currentTime = minutes * 60 + seconds; $('player').play().catch(() => {});
+});
 const pill = (result) => result.houseIgnited ? `<span class="pill bad">House ignited ${esc(result.houseIgnitedAt)}</span>` : '<span class="pill good">No house ignition</span>';
 const chain = (result) => result.chain?.length ? `<ol class="chain">${result.chain.map((item) => `<li><b>${esc(item.time)}</b> ${esc(item.label)}</li>`).join('')}</ol>` : '';
 function renderEvidence(summary) {
   const { before, latest, applied } = summary;
   const rounds = state?.fix_rounds || [];
   $('simulationNote').textContent = rounds.length || summary.pendingTests ? 'Recorded before/after comparisons use the same wind and random seed within each round.' : before ? state?.status === 'running' ? 'The baseline is recorded. The agent is evaluating the result and testing any required changes.' : 'Only the baseline model was tested. The suggestions in the report were not applied or re-tested.' : 'Recorded tests will appear here. Any before/after comparison uses the same wind and random seed.';
-  let simulations = before ? rounds.length ? rounds.map((round) => `<h3>${round.tag === 'wind' ? 'New wind' : 'Mitigation'} · round ${round.round} · wind from ${direction(round.wind)}</h3><div class="ba"><div><h4>Original for this round ${pill(round.before)}</h4><video src="${esc(round.before_video)}" controls muted preload="metadata"></video>${chain(round.before)}</div><div><h4>After tested fixes ${pill(round.after)}</h4><video src="${esc(round.after_video)}" controls muted preload="metadata"></video>${chain(round.after)}<p>${round.verdict.sim_agrees ? 'The agent’s verification agrees with the simulator.' : 'The agent disagreed. This result uses the simulator’s recorded outcome.'}</p></div></div>`).join('') : `<div class="ba"><div><h4>Baseline simulation ${pill(before.result)}</h4><video src="${esc(before.video)}" controls muted preload="metadata"></video>${chain(before.result)}<p>${before.result.ignited.length} modeled objects ignited. ${before.result.houseIgnited ? 'The house also ignited.' : 'The house did not ignite.'}</p></div><div class="no-after"><strong>${state?.status === 'running' ? 'Assessment still in progress' : 'No “after” test was run'}</strong><p>${state?.status === 'running' ? 'The agent is evaluating the baseline and testing changes where needed. Follow its progress on the right.' : 'The agent did not apply mitigation fixes. Its report lists suggestions for you to consider; their effects have not been verified by a second simulation.'}</p></div></div>` : empty('The first recorded ember test will appear here.');
+  let simulations = before ? rounds.length ? rounds.map((round) => `<h3>${round.tag === 'wind' ? 'New wind' : 'Mitigation'} · round ${round.round} · wind from ${direction(round.wind)}</h3>${(round.plan?.fixes || []).some((fix) => fix.evidence_frame) ? `<div class="evrow">${round.plan.fixes.filter((fix) => fix.evidence_frame).map((fix) => `<figure><img src="${esc(fix.evidence_frame)}" data-seek="${esc(fix.seen_in_video_at)}" alt="Footage at ${esc(fix.seen_in_video_at)}" loading="lazy"><figcaption>Footage ${esc(fix.seen_in_video_at)} · ${esc(fixLabel(null, fix.fix))}<br><span>${esc(fix.evidence || '')}</span></figcaption></figure>`).join('')}</div>` : ''}<div class="ba"><div><h4>Original for this round ${pill(round.before)}</h4><video src="${esc(round.before_video)}" controls muted preload="metadata"></video>${chain(round.before)}</div><div><h4>After tested fixes ${pill(round.after)}</h4><video src="${esc(round.after_video)}" controls muted preload="metadata"></video>${chain(round.after)}<p>${round.verdict.sim_agrees ? 'The agent’s verification agrees with the simulator.' : 'The agent disagreed. This result uses the simulator’s recorded outcome.'}</p></div></div>`).join('') : `<div class="ba"><div><h4>Baseline simulation ${pill(before.result)}</h4><video src="${esc(before.video)}" controls muted preload="metadata"></video>${chain(before.result)}<p>${before.result.ignited.length} modeled objects ignited. ${before.result.houseIgnited ? 'The house also ignited.' : 'The house did not ignite.'}</p></div><div class="no-after"><strong>${state?.status === 'running' ? 'Assessment still in progress' : 'No “after” test was run'}</strong><p>${state?.status === 'running' ? 'The agent is evaluating the baseline and testing changes where needed. Follow its progress on the right.' : 'The agent did not apply mitigation fixes. Its report lists suggestions for you to consider; their effects have not been verified by a second simulation.'}</p></div></div>` : empty('The first recorded ember test will appear here.');
   if (summary.pendingTests) simulations += `<h3>Latest re-test · agent verification in progress</h3><div class="ba"><div><h4>Recorded result ${pill(latest.result)}</h4><video src="${esc(latest.video)}" controls muted preload="metadata"></video>${chain(latest.result)}</div><div class="no-after"><strong>The agent is checking this re-test</strong><p>Changes were applied to the model before this recording. The confirmed fix list and explanation will appear after verification.</p></div></div>`;
   paint('sims', simulations);
   paint('fidelity', state?.fidelity?.length ? state.fidelity.map((round, index) => `<details class="round" ${index === state.fidelity.length - 1 ? 'open' : ''}><summary><span>Comparison round ${round.round}</span><span class="pill ${round.pass ? 'good' : 'neutral'}">${round.pass ? 'Agent accepted the match' : `${round.issues?.length || 0} corrections requested`}</span></summary>${round.issues?.length ? `<ul class="issues">${round.issues.map((issue) => `<li><b>Issue:</b> ${esc(issue.problem)}<br><b>Correction:</b> ${esc(issue.fix)}</li>`).join('')}</ul>` : ''}<div class="pairs">${round.pairs.map((pair) => `<figure><img src="${esc(pair.real)}" loading="lazy" alt="Original footage at ${esc(pair.ts)}"><figcaption>Original footage · ${esc(pair.ts)}</figcaption></figure><figure><img src="${esc(pair.render)}" loading="lazy" alt="Model render for camera ${esc(pair.id)}"><figcaption>Model render · ${esc(pair.ts)}</figcaption></figure>`).join('')}</div><p>Agent-assigned match score: ${esc(round.score)}/10. This is a visual comparison, not an independent accuracy certification.</p></details>`).join('') : empty(state?.spec_versions?.length && !state.video ? 'The illustrative property skips video matching.' : 'Video-to-model comparisons will appear after scene generation.'));

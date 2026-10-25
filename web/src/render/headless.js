@@ -3,7 +3,8 @@
 import * as THREE from "three";
 import { buildScene, addLights, SimView, configureRenderer } from "./build3d.js";
 import { Sim } from "../sim/embers.js";
-import { overviewCamera, drawHud } from "./views.js";
+import { overviewCamera, drawHud, drawMarkers } from "./views.js";
+import { computeMarkers, projectMarkers } from "./markers.js";
 
 const W = 960, H = 540;
 const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
@@ -23,9 +24,10 @@ function fresh(spec) {
   return { scene, built };
 }
 
-function snapshot(text) {
+function snapshot(text, labels, labelAlpha = 1) {
   const ctx = out.getContext("2d");
   ctx.drawImage(renderer.domElement, 0, 0);
+  if (labels?.length) drawMarkers(ctx, labels, labelAlpha);
   if (text) { drawHud(hud, text); ctx.drawImage(hud, 0, 0); }
   return out.toDataURL("image/jpeg", 0.72);
 }
@@ -40,22 +42,28 @@ window.ZZ = {
       return { id: c.id, videoTimestamp: c.videoTimestamp, dataUrl: snapshot(`model view "${c.id}" (video ${c.videoTimestamp})`) };
     });
   },
-  recordSim(spec, opts, every = 5) {
+  // One frame every `every` sim steps (0.3 s of sim time), played back at 15 fps.
+  recordSim(spec, opts, every = 3, fps = 15) {
     const { scene, built } = fresh(spec);
     const sim = new Sim(spec, opts);
     const view = new SimView(scene, built, sim);
-    const cam = overviewCamera(spec, sim.opts.windFrom, W / H);
+    const markers = computeMarkers(spec);
     const frames = [];
-    let i = 0;
+    const total = Math.ceil(sim.opts.duration / (sim.opts.dt * every));
+    let i = 0, f = 0;
     while (!sim.done) {
       sim.step();
       if (i++ % every === 0) {
-        view.update();
+        // Slow 20° orbit over the clip keeps the motion smooth and shows depth.
+        const cam = overviewCamera(spec, sim.opts.windFrom, W / H, -10 + (20 * f) / total);
+        view.update(1 / fps);
         renderer.render(scene, cam);
-        frames.push(snapshot(hudLines(sim, opts.label)));
+        const labelAlpha = sim.t < 6 ? 1 : 0.55;
+        frames.push(snapshot(hudLines(sim, opts.label), projectMarkers(markers, cam, W, H, THREE), labelAlpha));
+        f++;
       }
     }
-    return { frames, result: sim.result() };
+    return { frames, fps, result: sim.result() };
   },
 };
 

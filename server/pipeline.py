@@ -14,7 +14,7 @@ import tools
 
 RUNS = tools.ROOT / "runs"
 SAMPLES = tools.ROOT / "samples"
-MAX_FIDELITY_ROUNDS = 2
+MAX_FIDELITY_ROUNDS = 3
 MAX_FIX_ROUNDS = 4
 CATALOG = json.loads(tools._node("catalog"))
 
@@ -105,7 +105,7 @@ async def sim_record(run: Run, spec_n: int, label: str, wind: int | None = None)
 
 async def stage_survey(run: Run, video: Path):
     await run.emit("survey", "Argon is watching the full walk-around video…", "running")
-    inv, _ = await asyncio.to_thread(g.ask_json, [g.text(P.SURVEY.format(conventions=P.CONVENTIONS)), g.video(video)], system=P.SYSTEM, thinking="medium")
+    inv, _ = await asyncio.to_thread(g.ask_json, [g.text(P.SURVEY.format(conventions=P.CONVENTIONS)), g.video(video, resolution="high", agentic=True)], system=P.SYSTEM, thinking="high")
     run.inventory = inv
     run.path("inventory.json").write_text(json.dumps(inv, indent=1))
     await run.emit("survey", inv.get("summary", "Inventory ready"), "done", inventory=inv)
@@ -129,8 +129,9 @@ async def compile_with_repair(run: Run, code: str, stage: str, attempts: int = 2
 async def stage_generate(run: Run):
     await run.emit("generate", "Argon is writing the 3D model (scene.js) in one pass…", "running")
     reply, _ = await asyncio.to_thread(
-        g.ask, [g.text(P.GENERATE.format(kit=P.KIT_DOC, conventions=P.CONVENTIONS, inventory=json.dumps(run.inventory, indent=1)))],
-        system=P.SYSTEM, thinking="medium")
+        g.ask, [g.text(P.GENERATE.format(kit=P.KIT_DOC, conventions=P.CONVENTIONS, inventory=json.dumps(run.inventory, indent=1))),
+                g.video(run.path("video.mp4"), resolution="medium")],
+        system=P.SYSTEM, thinking="high")
     spec, code = await compile_with_repair(run, g.extract_code(reply), "generate")
     v = run.add_spec(spec, "generated", code)
     await run.emit("generate", f"Model built: {len(spec['objects'])} objects, {len(spec['cameras'])} matched cameras", "done", version=v, lines=code.count("\n") + 1)
@@ -149,7 +150,7 @@ async def stage_fidelity(run: Run, video: Path):
                       g.text(f"Camera {r['id']} — RENDER of the model:"), g.image(r["path"])]
             pairs.append({"id": r["id"], "ts": r["videoTimestamp"], "real": run.url(f"fid{rnd}/real_{r['id']}.jpg"), "render": run.url(f"fid{rnd}/render_{r['id']}.jpg")})
         code = run.path(run.state["spec_versions"][-1].get("scene", "")).read_text() if run.state["spec_versions"][-1].get("scene") else ""
-        reply, _ = await asyncio.to_thread(g.ask, [g.text(P.FIDELITY.format(code=code))] + parts, system=P.SYSTEM, thinking="low")
+        reply, _ = await asyncio.to_thread(g.ask, [g.text(P.FIDELITY.format(code=code))] + parts, system=P.SYSTEM, thinking="medium")
         verdict = g.parse_json(reply)
         entry = {"round": rnd, "pairs": pairs, **verdict}
         run.state["fidelity"].append(entry)
@@ -179,8 +180,10 @@ async def stage_mitigate(run: Run, wind: int | None = None, start_spec: int | No
         await run.emit(tag, f"Round {rnd}: Argon is watching the simulation to find the ignition chain…", "running")
         prompt = P.MITIGATE.format(wind=wind, mph=run.mph, describe=tools.describe(run.spec_path(spec_n)),
                                    result=json.dumps(current["result"], indent=1), catalog=json.dumps(CATALOG, indent=1),
+                                   inventory=json.dumps((run.inventory or {}).get("objects", []), indent=0)[:12000] or "(no video: sample property)",
                                    history=("Fixes already applied in earlier rounds:\n" + json.dumps(history, indent=1)) if history else "")
         plan, _ = await asyncio.to_thread(g.ask_json, [g.text(prompt), g.video(run.path(current["file"]))], system=P.SYSTEM, thinking="medium")
+        await attach_evidence(run, plan)
         await run.emit(tag, plan.get("diagnosis", "Chain identified"), "info", plan=plan)
 
         fixes_path = run.path(f"fixes_{tag}_{rnd}.json")
@@ -210,6 +213,24 @@ async def stage_mitigate(run: Run, wind: int | None = None, start_spec: int | No
         await run.emit("verify", f"Round {rnd}: " + msg, "done" if survives else "fail", step=step)
         current = after
     return spec_n, before, current
+
+
+async def attach_evidence(run: Run, plan: dict):
+    """Pulls the real video frame Argon cites for each hazard, so problems are visible, not just described."""
+    video = run.path("video.mp4")
+    if not video.exists():
+        return
+    for item in plan.get("fixes", []) + plan.get("failure_chain", []):
+        ts = item.get("seen_in_video_at")
+        if not ts or not isinstance(ts, str) or ":" not in ts:
+            continue
+        name = f"evidence_{ts.replace(':', '_').replace('.', '_')}.jpg"
+        try:
+            if not run.path(name).exists():
+                await asyncio.to_thread(tools.keyframe, video, ts, run.path(name))
+            item["evidence_frame"] = run.url(name)
+        except Exception:
+            pass
 
 
 async def stage_report(run: Run, before: dict, after: dict):

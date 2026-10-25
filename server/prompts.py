@@ -39,6 +39,9 @@ Build an inventory of everything relevant to wildfire EMBER risk near the house:
 they hold leaves/needles), vents (attic, foundation/crawlspace, gable; screened or not), decks (material, open underside, debris),
 fences (material, does it touch the house), plants within ~30 ft (especially junipers / dense shrubs against walls), mulch,
 firewood, furniture, propane, vehicles, doormats, anything combustible within 5 ft of the walls.
+Be EXHAUSTIVE and specific: scrub the whole video, zoom into frames, list every gutter run, every visible vent, every plant bed and
+shrub near the walls, every fence segment, and the condition of each (clogged? touching? dense? dry?). Record the single BEST
+timestamp where each item is clearly visible (seen_at[0]) - it will be shown to the homeowner as evidence.
 
 {conventions}
 
@@ -52,7 +55,8 @@ Return ONLY JSON:
   "objects": [
     {{"kind": "gutter|vent|deck|fence|plant|mulch|firewood|object", "description": "...", "material": "...",
       "location": "e.g. NE corner, touching the E wall", "approx_position_ft": [x, z], "distance_to_house_ft": n,
-      "seen_at": ["m:ss"], "ember_risk": "why it matters (or 'low')"}}
+      "seen_at": ["m:ss"], "condition": "e.g. gutter full of needles / shrub touching siding",
+      "ember_risk": "high|medium|low: why it matters"}}
   ],
   "camera_moments": [{{"timestamp": "m:ss", "camera_position_ft": [x, y, z], "looking_at_ft": [x, y, z], "shows": "..."}}],
   "uncertain": ["things you could not determine from the video"]
@@ -68,7 +72,8 @@ with frames from the real video, then used to simulate an ember storm, so materi
 Inventory from the video survey:
 {inventory}
 
-Rules: call kit.house first. Every object in the inventory with ember risk must appear. Put a kit.camera at each camera_moment
+Rules: call kit.house first. Every object in the inventory must appear (be detailed: individual shrubs, each gutter, each vent,
+plant colors, neighbors, paving, forest edge). Put a `// seen at m:ss` comment above each hazard so it can be traced to the video. Put a kit.camera at each camera_moment
 (id = short name, videoTimestamp exactly as given). Keep everything within 150 ft. Return ONLY one ```js code block."""
 
 FIX_SCENE = """Your scene.js failed validation. Fix it and return ONLY one ```js code block with the full corrected file.
@@ -93,7 +98,7 @@ Current scene.js:
 
 Answer with a ```json block FIRST:
 {{"pass": true|false, "score": 0-10, "issues": [{{"camera": "id", "problem": "...", "fix": "..."}}]}}
-pass = true only if every ember-relevant element is present, on the correct side, with the right material.
+pass = true only if score >= 8 AND every ember-relevant element is present, on the correct side, with the right material.
 If pass is false, follow it with ONE ```js block containing the full corrected scene.js (Scene Kit calls only)."""
 
 MITIGATE = """You are watching a recorded ember-storm simulation of this property (wind from {wind} deg at {mph} mph).
@@ -101,6 +106,9 @@ The overlay shows ignitions as they happen. The simulator's ignition log and hou
 
 Property model:
 {describe}
+
+What the homeowner's real video shows (inventory with timestamps):
+{inventory}
 
 Simulation result:
 {result}
@@ -115,9 +123,10 @@ Tasks:
 2. Choose the smallest, cheapest set of catalog fixes that should break that chain (prefer $ over $$$; Zone 0 first).
 
 Return ONLY JSON:
-{{"failure_chain": [{{"time": "m:ss", "what": "...", "why": "..."}}],
+{{"failure_chain": [{{"time": "m:ss", "object_id": "id", "what": "...", "why": "...", "seen_in_video_at": "m:ss or null"}}],
   "diagnosis": "one or two sentences",
-  "fixes": [{{"fix": "catalog_id", "target": "id or all", "why": "..."}}],
+  "fixes": [{{"fix": "catalog_id", "target": "id or all", "why": "...", "evidence": "what in the real video shows this problem",
+              "seen_in_video_at": "m:ss or null"}}],
   "expected_effect": "what should change in the next run"}}"""
 
 VERIFY = """Verification. Video 1 is the simulation BEFORE the fixes, video 2 is AFTER, same wind and same random seed.

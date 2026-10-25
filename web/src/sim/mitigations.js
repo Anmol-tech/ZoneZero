@@ -5,19 +5,20 @@
 import { distToHouse } from "../kit/spec.js";
 
 export const CATALOG = {
-  clear_gutters: { title: "Clean gutters / add metal gutter guards", cost: "$", target: "gutter id or \"all\"", zone0: false },
-  screen_vents: { title: "Cover vents with 1/8\" metal mesh (ember-resistant vents)", cost: "$", target: "vent id or \"all\"", zone0: false },
-  metal_fence_section: { title: "Replace first 5 ft of fence at the house with a metal gate/section", cost: "$$", target: "fence id", zone0: true },
-  metal_fence_full: { title: "Replace the whole wood fence with metal/masonry", cost: "$$$", target: "fence id", zone0: false },
-  clear_zone0_plants: { title: "Remove plants within 5 ft of the house (Zone 0)", cost: "$", target: "\"all\"", zone0: true },
-  gravel_zone0: { title: "Replace bark mulch with gravel within 5 ft of the house", cost: "$", target: "mulch id or \"all\"", zone0: true },
-  move_firewood: { title: "Move firewood 30+ ft from the house", cost: "$", target: "firewood id or \"all\"", zone0: true },
-  enclose_deck: { title: "Clear debris under the deck and enclose the underside", cost: "$$", target: "deck id", zone0: false },
-  clear_deck_items: { title: "Move combustible furniture/items off the deck and away from walls", cost: "$", target: "\"all\"", zone0: true },
-  class_a_roof: { title: "Replace roof with a Class A (metal/tile) roof", cost: "$$$", target: "\"house\"", zone0: false },
-  trim_trees: { title: "Trim/remove tree crowns within 10 ft of the house", cost: "$$", target: "plant id or \"all\"", zone0: false },
-  zone1_trees: { title: "Zone 1 (5-30 ft): limb up and thin trees, remove dead branches", cost: "$$", target: "plant id or \"all\"", zone0: false },
-  zone1_mulch: { title: "Zone 1 (5-30 ft): replace bark mulch with gravel or irrigated ground cover", cost: "$", target: "mulch id or \"all\"", zone0: false },
+  clear_gutters: { short: "Gutter guards", title: "Clean gutters / add metal gutter guards", cost: "$", target: "gutter id or \"all\"", zone0: false },
+  screen_vents: { short: "Vent mesh", title: "Cover vents with 1/8\" metal mesh (ember-resistant vents)", cost: "$", target: "vent id or \"all\"", zone0: false },
+  metal_fence_section: { short: "Metal fence at wall", title: "Replace first 5 ft of fence at the house with a metal gate/section", cost: "$$", target: "fence id", zone0: true },
+  metal_fence_full: { short: "Metal fence", title: "Replace the whole wood fence with metal/masonry", cost: "$$$", target: "fence id", zone0: false },
+  clear_zone0_plants: { short: "Zone 0 cleared", title: "Remove plants within 5 ft of the house (Zone 0)", cost: "$", target: "\"all\"", zone0: true },
+  gravel_zone0: { short: "Gravel in Zone 0", title: "Replace bark mulch with gravel within 5 ft of the house", cost: "$", target: "mulch id or \"all\"", zone0: true },
+  move_firewood: { short: "Firewood moved", title: "Move firewood 30+ ft from the house", cost: "$", target: "firewood id or \"all\"", zone0: true },
+  enclose_deck: { short: "Deck enclosed", title: "Clear debris under the deck and enclose the underside", cost: "$$", target: "deck id", zone0: false },
+  clear_deck_items: { short: "Deck cleared", title: "Move combustible furniture/items off the deck and away from walls", cost: "$", target: "\"all\"", zone0: true },
+  noncombustible_siding: { short: "Fiber-cement siding", title: "Re-side a wall with noncombustible siding (fiber cement / stucco)", cost: "$$$", target: "wall \"N\"|\"E\"|\"S\"|\"W\" or \"all\"", zone0: false },
+  class_a_roof: { short: "Class A roof", title: "Replace roof with a Class A (metal/tile) roof", cost: "$$$", target: "\"house\"", zone0: false },
+  trim_trees: { short: "Trees trimmed", title: "Trim/remove tree crowns within 10 ft of the house", cost: "$$", target: "plant id or \"all\"", zone0: false },
+  zone1_trees: { short: "Trees limbed up", title: "Zone 1 (5-30 ft): limb up and thin trees, remove dead branches", cost: "$$", target: "plant id or \"all\"", zone0: false },
+  zone1_mulch: { short: "Mulch → gravel", title: "Zone 1 (5-30 ft): replace bark mulch with gravel or irrigated ground cover", cost: "$", target: "mulch id or \"all\"", zone0: false },
 };
 
 const COST_RANK = { $: 1, $$: 2, $$$: 3 };
@@ -33,8 +34,13 @@ export function applyFixes(spec, fixes) {
   const near = (o, ft) => distToHouse(h, o.x, o.z) < ft;
   const pick = (kind, target) => out.objects.filter((o) => o.kind === kind && (target === "all" || o.id === target));
 
+  out.fixed = out.fixed || [];     // [{id, title}] fix history, so renders can label what changed
+  out.removed = out.removed || [];   // [{x, z, label, title}] objects a fix removed
+  const snap = () => new Map([["house", JSON.stringify(out.house)], ...out.objects.map((o) => [o.id, JSON.stringify(o)])]);
   for (const f of fixes) {
     const def = CATALOG[f.fix];
+    const beforeSnap = snap();
+    const beforeObjs = new Map(out.objects.map((o) => [o.id, o]));
     if (!def) { rejected.push({ ...f, reason: `"${f.fix}" is not in the mitigation catalog` }); continue; }
     const target = f.target ?? "all";
     let changed = 0;
@@ -78,6 +84,14 @@ export function applyFixes(spec, fixes) {
           changed++;
         }
         break;
+      case "noncombustible_siding": {
+        h.sidingOverride = h.sidingOverride || {};
+        for (const wall of target === "all" ? ["N", "E", "S", "W"] : [target]) {
+          if (!["N", "E", "S", "W"].includes(wall)) continue;
+          if ((h.sidingOverride[wall] || h.siding) === "wood") { h.sidingOverride[wall] = "fiber_cement"; changed++; }
+        }
+        break;
+      }
       case "class_a_roof":
         if (h.roof === "wood_shake" || h.roof === "asphalt") { h.roof = "metal"; changed++; }
         break;
@@ -94,7 +108,17 @@ export function applyFixes(spec, fixes) {
         for (const m of pick("mulch", target)) if (m.material === "bark" && distToHouse(h, m.x, m.z) < 30 + Math.max(m.w, m.d) / 2) { m.material = "gravel"; changed++; }
         break;
     }
-    if (changed) applied.push({ ...f, target, title: def.title, cost: def.cost, changed });
+    const afterSnap = snap();
+    const ids = [];
+    for (const [id, v] of beforeSnap) {
+      if (!afterSnap.has(id)) {
+        const o = beforeObjs.get(id);
+        out.removed.push({ x: o.x, z: o.z, label: o.species || o.objKind || o.kind, title: def.short });
+        ids.push(id);
+      } else if (afterSnap.get(id) !== v) ids.push(id);
+    }
+    for (const id of ids) if (afterSnap.has(id)) out.fixed.push({ id, title: def.short, fix: f.fix, ...(id === "house" ? { target } : {}) });
+    if (changed) applied.push({ ...f, target, title: def.title, cost: def.cost, changed, ids });
     else rejected.push({ ...f, reason: target !== "all" && !out.objects.some((o) => o.id === target)
       ? `no object with id "${target}"`
       : "already done, or the target is outside this fix's distance range (try the Zone 1 fixes for 5-30 ft)" });

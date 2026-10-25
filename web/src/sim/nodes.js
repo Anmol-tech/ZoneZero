@@ -61,7 +61,7 @@ export function buildNodes(spec) {
     for (const a of steps(wallLength(h, wall), 8)) {
       const [x, z] = wallPoint(h, wall, a, 0.5);
       add({ obj: "house", label: `${wall} wall siding`, part: "siding", p: [x, h.h / 2, z], r: 3,
-        f: SIDING[h.siding], trap: 0.004, heat: 1.2, fuel: 600, critical: true });
+        f: SIDING[h.sidingOverride?.[wall] || h.siding], trap: 0.004, heat: 1.2, fuel: 600, critical: true });
     }
   }
   const roof = ROOF[h.roof];

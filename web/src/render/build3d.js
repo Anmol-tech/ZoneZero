@@ -1,7 +1,8 @@
 // Builds a Three.js scene from a spec and animates a running Sim on top of it.
 import * as THREE from "three";
 import { wallPoint, wallLength } from "../sim/nodes.js";
-import { wallTexture, roofTexture, groundTexture, boardsTexture, skyTexture, SIDING_COLORS, hashStr, rng, shade } from "./textures.js";
+import { FireFX } from "./fire.js";
+import { wallTexture, roofTexture, groundTexture, boardsTexture, skyTexture, meshTexture, latticeTexture, SIDING_COLORS, hashStr, rng, shade } from "./textures.js";
 
 const COLORS = {
   deck: { wood: "#8a5d36", composite: "#6f665c" }, fence: { wood: "#9b7048", metal: 0x3a3f44, masonry: 0xb0a594 },
@@ -94,7 +95,9 @@ function houseMeshes(h, seed) {
       const x0 = toTex(wall, dx - 1.75), x1 = toTex(wall, dx + 1.75);
       door = { x0: Math.min(x0, x1), x1: Math.max(x0, x1) };
     }
-    faces[wall] = texMat(wallTexture({ len, h: h.h, material: h.siding, color: sidingColor, trim, stories: h.stories || 1, wainscot: h.wainscot || "none", garage, door, seed: seed + wall.charCodeAt(0) }));
+    const wallMaterial = h.sidingOverride?.[wall] || h.siding;
+    const wallColor = h.sidingOverride?.[wall] ? SIDING_COLORS[wallMaterial] : sidingColor;
+    faces[wall] = texMat(wallTexture({ len, h: h.h, material: wallMaterial, color: wallColor, trim, stories: h.stories || 1, wainscot: h.wainscot || "none", garage, door, seed: seed + wall.charCodeAt(0) }));
   }
   const plain = mat(sidingColor);
   const body = new THREE.Mesh(new THREE.BoxGeometry(h.w, h.h, h.d), [faces.E, faces.W, plain, plain, faces.S, faces.N]);
@@ -169,6 +172,7 @@ function flatPatch(w, d, map, y, repeatFt = 12) {
 }
 
 export function buildScene(spec) {
+  const fixedIds = new Set((spec.fixed || []).map((f) => f.id));
   const root = new THREE.Group();
   const byObj = new Map();
   const reg = (id, m) => {
@@ -190,16 +194,43 @@ export function buildScene(spec) {
     switch (o.kind) {
       case "vent": {
         const [x, z] = wallPoint(h, o.wall, o.x, 0.12);
-        const m = new THREE.Mesh(new THREE.BoxGeometry(2, 1.1, 0.2), mat(o.screened ? COLORS.ventScreened : COLORS.vent, o.screened ? { metalness: 0.6, roughness: 0.4 } : {}));
-        m.position.set(x, o.h, z); m.rotation.y = wallRot[o.wall]; reg(o.id, m);
+        const g = new THREE.Group();
+        const frame = new THREE.Mesh(new THREE.BoxGeometry(2.4, 1.4, 0.15), mat(0xe9e6df)); g.add(frame);
+        if (o.screened) {
+          const mesh = new THREE.Mesh(new THREE.BoxGeometry(2, 1, 0.12), mat(0xb7c0c6, { metalness: 0.8, roughness: 0.3, map: meshTexture() }));
+          mesh.position.z = 0.06; g.add(mesh);
+        } else {
+          // Open louvers: dark gaps embers can blow straight through.
+          const hole = new THREE.Mesh(new THREE.BoxGeometry(2, 1, 0.1), mat(0x0d0d0d)); hole.position.z = 0.05; g.add(hole);
+          for (let i = 0; i < 4; i++) { const sl = new THREE.Mesh(new THREE.BoxGeometry(2, 0.08, 0.2), mat(0x5a5a5a)); sl.position.set(0, -0.38 + i * 0.25, 0.12); sl.rotation.x = 0.5; g.add(sl); }
+        }
+        g.position.set(x, o.h, z); g.rotation.y = wallRot[o.wall]; reg(o.id, g);
         break;
       }
       case "gutter": {
         const len = wallLength(h, o.wall) + 3;
         const [x, z] = wallPoint(h, o.wall, 0, 1.6);
         const g = new THREE.Group();
-        g.add(new THREE.Mesh(new THREE.BoxGeometry(len, 0.55, 0.55), mat(COLORS.gutter)));
-        if (o.debris) { const db = new THREE.Mesh(new THREE.BoxGeometry(len * 0.95, 0.25, 0.45), mat(COLORS.debris)); db.position.y = 0.3; g.add(db); }
+        const trough = new THREE.Mesh(new THREE.BoxGeometry(len, 0.55, 0.6), mat(COLORS.gutter, { roughness: 0.5, metalness: 0.3 }));
+        g.add(trough);
+        if (o.debris) {
+          // Clog: piles of needles/leaves heaped in and spilling over the trough.
+          const leafCols = ["#6b4a22", "#8a5a24", "#a8742c", "#5c4a28", "#b0862f"];
+          for (let i = 0; i < Math.round(len * 1.6); i++) {
+            const leaf = new THREE.Mesh(new THREE.BoxGeometry(0.5 + r() * 0.5, 0.18 + r() * 0.25, 0.4 + r() * 0.3), mat(leafCols[Math.floor(r() * leafCols.length)]));
+            leaf.position.set(-len / 2 + r() * len, 0.3 + r() * 0.3, (r() - 0.5) * 0.5);
+            leaf.rotation.set(r(), r() * 3, r());
+            g.add(leaf);
+          }
+          for (let i = 0; i < Math.round(len / 6); i++) {
+            const drip = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.8 + r() * 0.8, 0.12), mat("#6b4a22"));
+            drip.position.set(-len / 2 + r() * len, -0.5, 0.32); g.add(drip);
+          }
+        } else if (fixedIds.has(o.id)) {
+          // Gutter guard: perforated metal cover.
+          const guard = new THREE.Mesh(new THREE.BoxGeometry(len, 0.08, 0.7), mat(0xa9b2b8, { metalness: 0.8, roughness: 0.35, map: meshTexture() }));
+          guard.position.y = 0.3; g.add(guard);
+        }
         g.position.set(x, h.h - 0.4, z); g.rotation.y = wallRot[o.wall]; reg(o.id, g);
         break;
       }
@@ -212,9 +243,27 @@ export function buildScene(spec) {
         for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
           const p = new THREE.Mesh(new THREE.BoxGeometry(0.5, 2.4, 0.5), mat(COLORS.deck[o.material])); p.position.set(sx * (len / 2 - 0.5), 1.2, sz * (o.depth / 2 - 0.5)); g.add(p);
         }
-        const rail = new THREE.Mesh(new THREE.BoxGeometry(len, 0.25, 0.25), mat(COLORS.deck[o.material])); rail.position.set(0, 5.4, o.depth / 2 - 0.2); g.add(rail);
-        if (o.underside === "enclosed") { const sk = new THREE.Mesh(new THREE.BoxGeometry(len, 2.2, o.depth), texMat(boardsTexture("#6e6a64", true))); sk.position.y = 1.1; g.add(sk); }
-        else if (o.debris) { const db = new THREE.Mesh(new THREE.BoxGeometry(len * 0.8, 0.4, o.depth * 0.8), mat(COLORS.debris)); db.position.y = 0.2; g.add(db); }
+        // Railing on the three open sides: top rail + balusters every ~0.5 ft.
+        const railMat = mat(shade(COLORS.deck[o.material], 1.1));
+        const sides = [[0, o.depth / 2 - 0.2, len, 0], [-len / 2 + 0.2, 0, o.depth, Math.PI / 2], [len / 2 - 0.2, 0, o.depth, Math.PI / 2]];
+        for (const [sx, sz, sl, rot] of sides) {
+          const side = new THREE.Group();
+          const top = new THREE.Mesh(new THREE.BoxGeometry(sl, 0.25, 0.35), railMat); top.position.y = 5.5; side.add(top);
+          const bot = new THREE.Mesh(new THREE.BoxGeometry(sl, 0.15, 0.2), railMat); bot.position.y = 2.9; side.add(bot);
+          const bal = new THREE.InstancedMesh(new THREE.BoxGeometry(0.12, 2.5, 0.12), railMat, Math.floor(sl / 0.5));
+          for (let i = 0; i < bal.count; i++) bal.setMatrixAt(i, new THREE.Matrix4().makeTranslation(-sl / 2 + 0.25 + i * 0.5, 4.2, 0));
+          side.add(bal);
+          side.position.set(sx, 0, sz); side.rotation.y = rot; g.add(side);
+        }
+        const stairs = new THREE.Mesh(new THREE.BoxGeometry(4, 1.2, 3), texMat(boardsTexture(COLORS.deck[o.material], false))); stairs.position.set(len / 4, 0.6, o.depth / 2 + 1.5); g.add(stairs);
+        if (o.underside === "enclosed") { const sk = new THREE.Mesh(new THREE.BoxGeometry(len, 2.2, o.depth), texMat(latticeTexture())); sk.position.y = 1.1; g.add(sk); }
+        else if (o.debris) {
+          const leafCols = ["#6b4a22", "#8a5a24", "#a8742c", "#5c4a28"];
+          for (let i = 0; i < Math.round(len * o.depth / 6); i++) {
+            const pile = new THREE.Mesh(new THREE.IcosahedronGeometry(0.6 + r() * 0.8, 0), mat(leafCols[Math.floor(r() * leafCols.length)], { flatShading: true }));
+            pile.scale.y = 0.35; pile.position.set((r() - 0.5) * len * 0.9, 0.2, (r() - 0.5) * o.depth * 0.9); g.add(pile);
+          }
+        }
         // Deck is built along +z of its local frame; rotate the local +z to face outward from the wall.
         g.position.set(x, 0, z); g.rotation.y = wallRot[o.wall]; reg(o.id, g);
         break;
@@ -317,54 +366,36 @@ const eachMat = (m, fn) => m.traverse((c) => {
   c.material = Array.isArray(c.material) ? c.material.map((x) => fn(x.clone())) : fn(c.material.clone());
 });
 
-// Visual layer for a running Sim: ember particles, flames, charring.
+// Visual layer for a running Sim: particle fire/smoke/embers (FireFX) plus
+// gradual charring of burning objects and a glow on the house once it ignites.
 export class SimView {
   constructor(scene, built, sim) {
     this.scene = scene; this.built = built; this.sim = sim;
-    this.maxEmbers = 4000;
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(this.maxEmbers * 3), 3));
-    this.points = new THREE.Points(geo, new THREE.PointsMaterial({ color: 0xffa020, size: 1.1, sizeAttenuation: true, transparent: true, opacity: 0.95 }));
-    scene.add(this.points);
-    this.flames = new Map();
-    this.flameGeo = new THREE.ConeGeometry(1, 2.5, 7);
-    this.charred = new Set();
-    this.houseGlow = null;
+    this.fx = new FireFX(scene, sim);
+    this.char = new Map(); // obj id -> {mats, k}
+    this.houseLit = false;
   }
-  update() {
-    const pos = this.points.geometry.attributes.position.array;
-    const n = Math.min(this.sim.embers.length, this.maxEmbers);
-    for (let i = 0; i < n; i++) { const e = this.sim.embers[i]; pos[i * 3] = e.x; pos[i * 3 + 1] = e.y; pos[i * 3 + 2] = e.z; }
-    this.points.geometry.setDrawRange(0, n);
-    this.points.geometry.attributes.position.needsUpdate = true;
-
+  update(dt = 1 / 30) {
+    this.fx.update(dt);
     for (const node of this.sim.nodes) {
-      let fl = this.flames.get(node.idx);
-      if (node.state === "burning") {
-        if (!fl) {
-          fl = new THREE.Mesh(this.flameGeo, new THREE.MeshBasicMaterial({ color: 0xff5a1f, transparent: true, opacity: 0.85, fog: false }));
-          fl.position.set(node.p[0], node.p[1] + node.r * 0.3, node.p[2]);
-          this.scene.add(fl); this.flames.set(node.idx, fl);
-        }
-        const s = Math.max(0.3, node.intensity) * Math.min(node.r, 6) * 0.9 * (0.85 + 0.3 * Math.random());
-        fl.scale.set(s, s * 1.4, s);
-        if (!this.charred.has(node.obj) && node.obj !== "house") {
-          this.charred.add(node.obj);
-          for (const m of this.built.byObj.get(node.obj) || []) eachMat(m, (x) => { x.color.lerp(new THREE.Color(0x1a1410), 0.75); return x; });
-        }
-      } else if (fl && node.state === "burnt") {
-        this.scene.remove(fl); this.flames.delete(node.idx);
+      if (node.state === "idle" || node.obj === "house") continue;
+      let c = this.char.get(node.obj);
+      if (!c) {
+        const mats = [];
+        for (const m of this.built.byObj.get(node.obj) || []) eachMat(m, (x) => { mats.push({ m: x, base: x.color.clone() }); return x; });
+        c = { mats, k: 0 };
+        this.char.set(node.obj, c);
+      }
+      if (c.k < 1) {
+        c.k = Math.min(1, c.k + dt * 0.25);
+        for (const { m, base } of c.mats) m.color.copy(base).lerp(CHAR, c.k * 0.85);
       }
     }
-    if (this.sim.houseIgnitedAt !== null && !this.houseGlow) {
-      this.houseGlow = new THREE.PointLight(0xff4400, 8000, 120);
-      this.houseGlow.position.set(0, this.sim.spec.house.h + 4, 0); this.scene.add(this.houseGlow);
-      for (const m of this.built.byObj.get("house") || []) eachMat(m, (x) => { x.emissive = new THREE.Color(0x802000); return x; });
+    if (this.sim.houseIgnitedAt !== null && !this.houseLit) {
+      this.houseLit = true;
+      for (const m of this.built.byObj.get("house") || []) eachMat(m, (x) => { x.emissive = new THREE.Color(0x2a0c00); return x; });
     }
   }
-  dispose() {
-    this.scene.remove(this.points);
-    for (const fl of this.flames.values()) this.scene.remove(fl);
-    if (this.houseGlow) this.scene.remove(this.houseGlow);
-  }
+  dispose() { this.fx.dispose(); }
 }
+const CHAR = new THREE.Color(0x17120e);
