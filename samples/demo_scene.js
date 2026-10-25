@@ -1,0 +1,25 @@
+// Hand-written demo property (used before Argon generates one from video).
+kit.house({ w: 44, d: 32, h: 11, roof: "asphalt", siding: "wood" });
+kit.gutter({ wall: "N", debris: true });
+kit.gutter({ wall: "S", debris: false });
+kit.gutter({ wall: "E", debris: true });
+kit.gutter({ wall: "W", debris: false });
+kit.vent({ wall: "W", x: -6, h: 1.5, screened: false });
+kit.vent({ wall: "E", x: 4, h: 9.5, screened: false });
+kit.deck({ wall: "S", depth: 12, length: 24, offset: 6, material: "wood", underside: "open", debris: true });
+kit.fence({ from: [22, -8], to: [22, -60], material: "wood", attachedToHouse: true });
+kit.fence({ from: [-22, 4], to: [-60, 4], material: "wood", attachedToHouse: true });
+kit.plant({ x: -25, z: -10, kind: "juniper", height: 5 });
+kit.plant({ x: -25, z: -3, kind: "juniper", height: 4 });
+kit.plant({ x: 6, z: -19, kind: "shrub", height: 3 });
+kit.plant({ x: -45, z: -30, kind: "tree", height: 30 });
+kit.plant({ x: 40, z: 30, kind: "tree", height: 25 });
+kit.mulch({ x: -25, z: -6, w: 4, d: 14, material: "bark" });
+kit.firewood({ x: 10, z: 22 });
+kit.object({ x: 14, z: 20, kind: "patio_furniture", material: "wicker" });
+kit.object({ x: 30, z: 10, kind: "trash_bin", material: "plastic" });
+kit.object({ x: 0, z: -40, kind: "car", material: "metal" });
+kit.camera({ id: "front", pos: [0, 6, -70], lookAt: [0, 5, 0], videoTimestamp: "0:03" });
+kit.camera({ id: "west", pos: [-70, 6, -5], lookAt: [0, 5, 0], videoTimestamp: "0:20" });
+kit.camera({ id: "back", pos: [10, 6, 70], lookAt: [0, 4, 0], videoTimestamp: "0:45" });
+kit.camera({ id: "east", pos: [70, 6, -20], lookAt: [20, 4, -10], videoTimestamp: "1:05" });

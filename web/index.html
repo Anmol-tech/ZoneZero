@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ZoneZero</title>
+  <link rel="stylesheet" href="/src/ui/style.css" />
+</head>
+<body>
+  <header>
+    <div class="brand"><span class="logo">🔥</span> ZoneZero <small>see how embers would ignite your home, and what stops them</small></div>
+    <div class="controls">
+      <label class="file">📹 Walk-around video <input id="video" type="file" accept="video/*" /></label>
+      <span id="videoName" class="muted"></span>
+      <label>Wind from
+        <select id="wind">
+          <option value="0">N</option><option value="45" selected>NE (Santa Ana)</option><option value="90">E</option><option value="135">SE</option>
+          <option value="180">S</option><option value="225">SW</option><option value="270">W</option><option value="315">NW</option>
+        </select>
+      </label>
+      <button id="start" class="primary">Analyze my home</button>
+      <button id="sample" title="Skip the video; use the built-in demo property">Demo property</button>
+      <span id="health" class="badge"></span>
+    </div>
+  </header>
+
+  <main>
+    <section class="left">
+      <div class="card">
+        <h3>Your video</h3>
+        <video id="player" controls muted playsinline></video>
+        <div id="chips" class="chips"></div>
+      </div>
+      <div class="card">
+        <h3>Judge test: new wind</h3>
+        <p class="muted">Does the hardened home hold if the wind shifts? If not, Argon keeps fixing.</p>
+        <div class="row">
+          <select id="judgeWind">
+            <option value="0">N</option><option value="45">NE</option><option value="90">E</option><option value="135">SE</option>
+            <option value="180">S</option><option value="225">SW</option><option value="270">W</option><option value="315">NW</option>
+          </select>
+          <button id="windTest" disabled>Test this wind</button>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Managed Agent: all-winds stress test</h3>
+        <p class="muted">An Antigravity agent searches its sandbox for the cheapest fix set that survives 8 wind directions × 3 seeds, then we re-check its answer locally.</p>
+        <button id="agent" disabled>Launch agent</button>
+        <div id="agentGrid"></div>
+      </div>
+    </section>
+
+    <section class="center">
+      <nav class="tabs">
+        <button data-tab="model" class="on">3D model</button>
+        <button data-tab="fidelity">Video vs model</button>
+        <button data-tab="sims">Before / after</button>
+        <button data-tab="report">Report</button>
+      </nav>
+      <div id="tab-model" class="tab on">
+        <div class="viewbar">
+          <select id="version"></select>
+          <button id="play">▶ Play ember storm</button>
+          <span id="simStatus" class="muted"></span>
+        </div>
+        <div id="viewport"></div>
+      </div>
+      <div id="tab-fidelity" class="tab"><div id="fidelity" class="pad muted">The fidelity loop compares real video frames with renders of the model.</div></div>
+      <div id="tab-sims" class="tab"><div id="sims" class="pad muted">Simulations will appear here.</div></div>
+      <div id="tab-report" class="tab"><div id="report" class="pad muted">The homeowner report appears when the pipeline finishes.</div></div>
+    </section>
+
+    <section class="right">
+      <h3>Argon log <span id="runId" class="muted"></span></h3>
+      <ol id="log"></ol>
+    </section>
+  </main>
+  <script type="module" src="/src/ui/main.js"></script>
+</body>
+</html>
