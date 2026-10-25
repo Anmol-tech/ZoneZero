@@ -200,6 +200,17 @@ $("windTest").onclick = async () => {
 };
 $("agent").onclick = async () => { await fetch(`/api/runs/${runId}/agent`, { method: "POST" }); };
 
+// Open an existing run (e.g. one started from the API) with ?run=<id>.
+const linked = new URLSearchParams(location.search).get("run");
+if (linked) {
+  runId = linked;
+  $("runId").textContent = `· ${runId}`;
+  fetch(`/api/runs/${runId}/state`).then((r) => r.json()).then((s) => {
+    if (s.video) $("player").src = s.video;
+    listen();
+  });
+}
+
 fetch("/api/health").then((r) => r.json()).then((h) => {
   $("health").textContent = h.gemini_key ? "Gemini key ✓" : "No Gemini key (server/.env)";
   $("health").style.color = h.gemini_key ? "var(--ok)" : "var(--fire)";

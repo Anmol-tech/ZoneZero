@@ -112,7 +112,9 @@ export function buildNodes(spec) {
         const d = PLANT[o.species];
         const tree = o.species === "tree";
         const r = tree ? Math.max(3, o.height / 3) : Math.max(1.5, o.height / 2);
-        add({ obj: o.id, label: o.species, part: "plant", p: [o.x, tree ? o.height * 0.65 : Math.max(0.5, o.height / 2), o.z], r, ...d });
+        // Limbed-up, thinned trees (Zone 1 work) hold far fewer embers and burn less intensely.
+        const fuel = o.limbed ? { ...d, f: 0.12, trap: 0.1, heat: 0.45 } : d;
+        add({ obj: o.id, label: o.limbed ? "tree (limbed up)" : o.species, part: "plant", p: [o.x, tree ? o.height * 0.65 : Math.max(0.5, o.height / 2), o.z], r, ...fuel });
         break;
       }
       case "mulch": {

@@ -93,7 +93,9 @@ export function buildScene(spec) {
         if (o.species === "tree") {
           const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 1, o.height * 0.5, 8), mat(COLORS.trunk));
           trunk.position.set(o.x, o.height * 0.25, o.z); reg(o.id, trunk);
-          const crown = new THREE.Mesh(new THREE.IcosahedronGeometry(Math.max(3, o.height / 3), 1), mat(COLORS.plant.tree, { flatShading: true }));
+          // Limbed-up trees (Zone 1 fix) get a smaller, higher crown.
+          const crown = new THREE.Mesh(new THREE.IcosahedronGeometry(Math.max(3, o.height / 3) * (o.limbed ? 0.65 : 1), 1), mat(COLORS.plant.tree, { flatShading: true }));
+          if (o.limbed) trunk.scale.y = 1.4;
           crown.position.set(o.x, o.height * 0.65, o.z); crown.castShadow = true; reg(o.id, crown);
         } else {
           const geo = o.species === "juniper" ? new THREE.ConeGeometry(Math.max(1.2, o.height / 2.5), o.height, 7) : new THREE.IcosahedronGeometry(Math.max(1, o.height / 2), 0);

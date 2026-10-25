@@ -16,6 +16,8 @@ export const CATALOG = {
   clear_deck_items: { title: "Move combustible furniture/items off the deck and away from walls", cost: "$", target: "\"all\"", zone0: true },
   class_a_roof: { title: "Replace roof with a Class A (metal/tile) roof", cost: "$$$", target: "\"house\"", zone0: false },
   trim_trees: { title: "Trim/remove tree crowns within 10 ft of the house", cost: "$$", target: "plant id or \"all\"", zone0: false },
+  zone1_trees: { title: "Zone 1 (5-30 ft): limb up and thin trees, remove dead branches", cost: "$$", target: "plant id or \"all\"", zone0: false },
+  zone1_mulch: { title: "Zone 1 (5-30 ft): replace bark mulch with gravel or irrigated ground cover", cost: "$", target: "mulch id or \"all\"", zone0: false },
 };
 
 const COST_RANK = { $: 1, $$: 2, $$$: 3 };
@@ -85,9 +87,17 @@ export function applyFixes(spec, fixes) {
         changed = before - out.objects.length;
         break;
       }
+      case "zone1_trees":
+        for (const t of pick("plant", target)) if (t.species === "tree" && !t.limbed && near(t, 30 + t.height / 3)) { t.limbed = true; changed++; }
+        break;
+      case "zone1_mulch":
+        for (const m of pick("mulch", target)) if (m.material === "bark" && distToHouse(h, m.x, m.z) < 30 + Math.max(m.w, m.d) / 2) { m.material = "gravel"; changed++; }
+        break;
     }
     if (changed) applied.push({ ...f, target, title: def.title, cost: def.cost, changed });
-    else rejected.push({ ...f, reason: "nothing to change for that target" });
+    else rejected.push({ ...f, reason: target !== "all" && !out.objects.some((o) => o.id === target)
+      ? `no object with id "${target}"`
+      : "already done, or the target is outside this fix's distance range (try the Zone 1 fixes for 5-30 ft)" });
   }
   return { spec: out, applied, rejected };
 }

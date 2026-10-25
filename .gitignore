@@ -5,3 +5,4 @@ runs/
 server/.env
 web/dist/
 .DS_Store
+samples/stock/
