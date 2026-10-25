@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { buildScene, addLights, SimView } from "../render/build3d.js";
+import { buildScene, addLights, SimView, configureRenderer } from "../render/build3d.js";
 import { Sim } from "../sim/embers.js";
 
 const $ = (id) => document.getElementById(id);
@@ -10,7 +10,7 @@ let runId = null, es = null, state = null;
 // ---------- 3D viewer ----------
 const vp = $("viewport");
 const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.shadowMap.enabled = true;
+configureRenderer(renderer);
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 vp.appendChild(renderer.domElement);
 const camera = new THREE.PerspectiveCamera(50, 1, 0.5, 2000);
@@ -33,6 +33,9 @@ function showSpec(s) {
   addLights(scene);
   built = buildScene(s);
   scene.add(built.root);
+  // Start from the video's first viewpoint so the model is framed like the footage.
+  const c0 = s.cameras?.[0];
+  if (c0) { camera.position.set(...c0.pos); controls.target.set(...c0.lookAt); }
   $("simStatus").textContent = `${s.objects.length} objects`;
 }
 

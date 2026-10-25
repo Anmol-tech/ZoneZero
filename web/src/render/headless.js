@@ -1,14 +1,14 @@
 // Page driven by Playwright (server/render.py): renders a spec from the
 // video-matched cameras, or records an ember-storm run as JPEG frames.
 import * as THREE from "three";
-import { buildScene, addLights, SimView } from "./build3d.js";
+import { buildScene, addLights, SimView, configureRenderer } from "./build3d.js";
 import { Sim } from "../sim/embers.js";
 import { overviewCamera, drawHud } from "./views.js";
 
 const W = 960, H = 540;
 const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
 renderer.setSize(W, H);
-renderer.shadowMap.enabled = true;
+configureRenderer(renderer);
 document.body.appendChild(renderer.domElement);
 const hud = document.createElement("canvas");
 hud.width = W; hud.height = H;

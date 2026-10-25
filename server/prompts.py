@@ -13,18 +13,26 @@ CONVENTIONS = """Coordinate conventions (feet):
 """
 
 KIT_DOC = """Scene Kit API (the ONLY calls allowed; no other JavaScript, no loops, no variables needed):
-kit.house({ w, d, h, roof: "asphalt"|"wood_shake"|"tile"|"metal", siding: "wood"|"stucco"|"fiber_cement" })   // call first, once. w along x, d along z, h = wall height
+kit.house({ w, d, h, roof: "asphalt"|"wood_shake"|"tile"|"metal", siding: "wood"|"stucco"|"fiber_cement",
+            stories: 1|2|3, roofStyle: "hip"|"gable"|"flat", ridge: "x"|"z",          // ridge axis of a gable/hip roof
+            wainscot: "none"|"stone"|"brick",                                          // masonry band at the base of the walls
+            garage: { wall, x, width }, porch: { wall, x, w, d },                      // x = offset along that wall from its center
+            sidingColor: "#rrggbb", trimColor: "#rrggbb" })   // call first, once. w along x, d along z, h = wall height (eaves)
 kit.vent({ wall: "N"|"E"|"S"|"W", x, h, screened })          // x = offset along the wall from its center, h = height above ground
 kit.gutter({ wall, debris })                                  // one per wall that has a gutter
 kit.deck({ wall, depth, length, offset, material: "wood"|"composite", underside: "open"|"enclosed", debris })
 kit.fence({ from: [x, z], to: [x, z], material: "wood"|"metal"|"masonry", attachedToHouse })
-kit.plant({ x, z, kind: "juniper"|"shrub"|"tree"|"grass", height })
+kit.plant({ x, z, kind: "juniper"|"shrub"|"tree"|"conifer"|"grass", height, color: "#rrggbb" })   // tree = broadleaf; conifer = pine/fir
+kit.forest({ x, z, w, d, density: 0.05-1, height })            // a stand of conifers (e.g. forest edge behind the lot)
+kit.neighbor({ x, z, w, d, h, roof, siding, sidingColor })    // a neighboring building (center x,z); keep >= 2 ft from our footprint
+kit.paving({ x, z, w, d, kind: "driveway"|"path"|"patio"|"street" })
 kit.mulch({ x, z, w, d, material: "bark"|"gravel" })          // rectangle centered at x,z
 kit.firewood({ x, z })
 kit.object({ x, z, kind: "patio_furniture"|"trash_bin"|"propane_tank"|"car"|"doormat"|"planter", material: "wood"|"plastic"|"metal"|"fabric"|"wicker" })
-kit.camera({ id, pos: [x, y, z], lookAt: [x, y, z], videoTimestamp: "m:ss" })   // >= 4, matching real video moments; y ~ 5.5 (eye height)
+kit.camera({ id, pos: [x, y, z], lookAt: [x, y, z], videoTimestamp: "m:ss" })   // >= 4, matching real video moments (use the real camera height, e.g. 60+ ft for drone shots)
 kit.note("short text")                                        // optional assumptions
-"""
+Make it LOOK like the video: match stories, roof style and ridge direction, garage/porch placement, siding and plant colors,
+neighbors, driveway/street and any forest edge. Fire-relevant facts (materials, what touches what) matter most."""
 
 SURVEY = """Watch this entire walk-around video of a home (with any narration).
 Build an inventory of everything relevant to wildfire EMBER risk near the house: roof and siding materials, gutters (and whether
@@ -37,7 +45,10 @@ firewood, furniture, propane, vehicles, doormats, anything combustible within 5 
 Return ONLY JSON:
 {{
   "summary": "one sentence about the property",
-  "house": {{"approx_w_ft": n, "approx_d_ft": n, "wall_height_ft": n, "roof": "...", "siding": "...", "notes": "..."}},
+  "house": {{"approx_w_ft": n, "approx_d_ft": n, "wall_height_ft": n, "stories": n, "roof": "...", "roof_style": "hip|gable|flat",
+             "siding": "...", "siding_color_hex": "#rrggbb", "wainscot": "none|stone|brick", "garage": "which wall, where",
+             "porch": "which wall, where", "notes": "..."}},
+  "surroundings": {{"neighbors": ["position/size/material of each nearby building"], "forest_edge": "where, how far", "driveway_street": "..."}},
   "objects": [
     {{"kind": "gutter|vent|deck|fence|plant|mulch|firewood|object", "description": "...", "material": "...",
       "location": "e.g. NE corner, touching the E wall", "approx_position_ft": [x, z], "distance_to_house_ft": n,
@@ -70,9 +81,10 @@ Current scene.js:
 ```"""
 
 FIDELITY = """Fidelity check. For each camera below you get the REAL video frame and then the RENDER of the current model from the
-same viewpoint. Compare them. Look for: missing or extra objects, wrong side of the house, wrong materials (roof/siding/fence),
-fence touching vs not touching the house, plants against walls, deck size/side, gutter or vent placement. Ignore lighting, textures
-and low-poly style; we only care about layout and materials that affect ember risk.
+same viewpoint. Compare them. Look for: missing or extra objects, wrong side of the house (check for a mirrored layout), wrong materials
+(roof/siding/fence), fence touching vs not touching the house, plants against walls, deck size/side, gutter or vent placement,
+AND the overall look: number of stories, roof style/ridge direction, garage and porch position, siding/plant colors, neighbors,
+driveway/street, forest edge, and whether the camera framing matches. Ignore lighting and the low-poly style.
 
 Current scene.js:
 ```js

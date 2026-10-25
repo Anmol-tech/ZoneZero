@@ -20,6 +20,7 @@ const PLANT = {
   juniper: { f: 0.95, trap: 0.55, heat: 1.0, fuel: 35 },
   shrub: { f: 0.5, trap: 0.35, heat: 0.6, fuel: 25 },
   tree: { f: 0.35, trap: 0.25, heat: 0.8, fuel: 90 },
+  conifer: { f: 0.8, trap: 0.45, heat: 1.1, fuel: 70 },
   grass: { f: 0.85, trap: 0.35, heat: 0.35, fuel: 8 },
 };
 const OBJ = {
@@ -110,10 +111,10 @@ export function buildNodes(spec) {
       }
       case "plant": {
         const d = PLANT[o.species];
-        const tree = o.species === "tree";
-        const r = tree ? Math.max(3, o.height / 3) : Math.max(1.5, o.height / 2);
+        const tree = o.species === "tree" || o.species === "conifer";
+        const r = o.species === "conifer" ? Math.max(3, o.height / 5) : tree ? Math.max(3, o.height / 3) : Math.max(1.5, o.height / 2);
         // Limbed-up, thinned trees (Zone 1 work) hold far fewer embers and burn less intensely.
-        const fuel = o.limbed ? { ...d, f: 0.12, trap: 0.1, heat: 0.45 } : d;
+        const fuel = o.limbed ? { ...d, f: o.species === "conifer" ? 0.25 : 0.12, trap: 0.1, heat: 0.45 } : d;
         add({ obj: o.id, label: o.limbed ? "tree (limbed up)" : o.species, part: "plant", p: [o.x, tree ? o.height * 0.65 : Math.max(0.5, o.height / 2), o.z], r, ...fuel });
         break;
       }
@@ -122,6 +123,16 @@ export function buildNodes(spec) {
         for (const a of steps(o.w, 4)) for (const b of steps(o.d, 4)) {
           add({ obj: o.id, label: "bark mulch", part: "mulch", p: [o.x + a, 0.3, o.z + b], r: 2.2, f: 0.75, trap: 0.8, heat: 0.4, fuel: 50 });
         }
+        break;
+      }
+      case "neighbor": {
+        // Neighbor walls burn like ours but are not "our house"; they radiate onto our siding.
+        const nh = { w: o.w, d: o.d, h: o.h };
+        for (const wall of ["N", "E", "S", "W"]) for (const a of steps(wallLength(nh, wall), 8)) {
+          const [x, z] = wallPoint(nh, wall, a, 0.5);
+          add({ obj: o.id, label: "neighbor's siding", part: "neighbor", p: [o.x + x, o.h / 2, o.z + z], r: 3, f: SIDING[o.siding], trap: 0.004, heat: 1.2, fuel: 600 });
+        }
+        add({ obj: o.id, label: "neighbor's roof", part: "neighbor", p: [o.x, o.h + ROOF_RISE * 0.6, o.z], r: Math.max(6, Math.min(o.w, o.d) / 3), f: ROOF[o.roof].f, trap: ROOF[o.roof].trap, heat: 1.2, fuel: 600 });
         break;
       }
       case "firewood":

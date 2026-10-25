@@ -53,7 +53,7 @@ export function applyFixes(spec, fixes) {
         break;
       case "clear_zone0_plants": {
         const before = out.objects.length;
-        out.objects = out.objects.filter((o) => !(o.kind === "plant" && o.species !== "tree" && near(o, 5)));
+        out.objects = out.objects.filter((o) => !(o.kind === "plant" && o.species !== "tree" && o.species !== "conifer" && near(o, 5)));
         changed = before - out.objects.length;
         break;
       }
@@ -83,12 +83,12 @@ export function applyFixes(spec, fixes) {
         break;
       case "trim_trees": {
         const before = out.objects.length;
-        out.objects = out.objects.filter((o) => !(o.kind === "plant" && o.species === "tree" && (target === "all" || o.id === target) && near(o, 10)));
+        out.objects = out.objects.filter((o) => !(o.kind === "plant" && (o.species === "tree" || o.species === "conifer") && (target === "all" || o.id === target) && near(o, 10)));
         changed = before - out.objects.length;
         break;
       }
       case "zone1_trees":
-        for (const t of pick("plant", target)) if (t.species === "tree" && !t.limbed && near(t, 30 + t.height / 3)) { t.limbed = true; changed++; }
+        for (const t of pick("plant", target)) if ((t.species === "tree" || t.species === "conifer") && !t.limbed && near(t, 30 + t.height / 3)) { t.limbed = true; changed++; }
         break;
       case "zone1_mulch":
         for (const m of pick("mulch", target)) if (m.material === "bark" && distToHouse(h, m.x, m.z) < 30 + Math.max(m.w, m.d) / 2) { m.material = "gravel"; changed++; }
