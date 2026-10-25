@@ -64,6 +64,8 @@ const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.set(0, 5, 0);
 controls.enableDamping = true;
 let scene = new THREE.Scene(), built = null, spec = null, sim = null, simView = null, acc = 0, last = performance.now();
+// Dev-only handle for checking what the viewer draws (ember positions, camera); stripped from production builds.
+if (import.meta.env.DEV) window.__zzDebug = { get sim() { return sim; }, get fx() { return simView?.fx; }, camera, THREE };
 // Hazard (red) / fix (green) labels drawn on a 2D overlay above the 3D view.
 let groups = [], pins = [], labelFilter = 'all', hoverKey = null, legendKey = null, flight = null;
 // The legend starts minimized; the viewer's choice is remembered on this device.
@@ -101,7 +103,7 @@ function showSpec(next, illustrative = false) {
   const viewpoint = next.cameras?.[0];
   if (viewpoint) { camera.position.set(...viewpoint.pos); controls.target.set(...viewpoint.lookAt); }
   $('simStatus').textContent = illustrative ? 'Illustrative property · not generated from footage' : `${next.objects.length} scene objects · ${next.cameras.length} camera views`;
-  vp.querySelector('.viewer-badge').textContent = illustrative ? 'ILLUSTRATIVE PREVIEW' : 'SIMPLIFIED PROPERTY MODEL';
+  vp.querySelector('.viewer-badge').textContent = illustrative ? 'ILLUSTRATIVE PREVIEW' : '';
   $('play').innerHTML = '<span aria-hidden="true">▷</span> Play ember test';
 }
 function animate(now) {
@@ -376,7 +378,10 @@ function renderTakeaway(summary) {
   } else {
     const pill = (text, cls = '') => `<span class="pill-chip ${cls}">${text}</span>`;
     const tested = facts.tested ? pill(`Tested wind: ${facts.finalS === null ? 'no ignition after changes' : `ignites at ${fmtT(facts.finalS)}`}`, facts.finalS === null ? 'good' : 'bad') : '';
-    const winds = sw ? pill(`${sw.noIgnition}/24 wind tests hold`, !sw.complete ? '' : sw.ignited === 0 ? 'good' : sw.noIgnition === 0 ? 'bad' : 'warn') : pill('Other winds not checked');
+    const swTone = !sw?.complete ? '' : sw.ignited === 0 ? 'good' : sw.noIgnition === 0 ? 'bad' : 'warn';
+    const winds = !sw ? pill('Other winds not checked')
+      : sw.complete && sw.baselineIgnited !== null ? pill(`All winds: ${sw.baselineIgnited}/24 ignite before → ${sw.ignited}/24 after`, swTone)
+      : pill(`${sw.noIgnition}/24 wind tests hold`, swTone);
     paint('resultSummary', `<div class="band slim tone-${v.tone}"><span class="band-dot"></span><div class="band-text"><h1>${esc(v.title)}</h1></div><div class="band-pills">${tested}${winds}<button class="link" data-open-tab="report">Action plan →</button></div></div>`);
   }
   document.querySelector('.next-steps').hidden = Boolean(top.length);
@@ -456,7 +461,9 @@ function renderEvidence(summary) {
   const rsw = rfacts?.swarm;
   const stats = rfacts?.hasBaseline ? `<div class="plan-stats">${
     stat('Tested wind', rfacts.tested ? `${mm(rfacts.baselineS)} → ${mm(rfacts.finalS)}` : mm(rfacts.baselineS), rfacts.tested ? 'house ignition, before → after' : 'house ignition', rfacts.finalS === null ? 'good' : 'bad')}${
-    rsw ? stat('All winds', `${rsw.noIgnition}/24`, rsw.complete ? 'scenarios hold' : `${rsw.checked}/24 checked`, !rsw.complete ? '' : rsw.ignited === 0 ? 'good' : rsw.noIgnition === 0 ? 'bad' : 'warn') : stat('All winds', '—', 'not checked')}${
+    rsw ? rsw.complete && rsw.baselineIgnited !== null
+      ? stat('All winds', `${rsw.baselineIgnited} → ${rsw.ignited}`, 'of 24 ignite, before → after', rsw.ignited === 0 ? 'good' : rsw.noIgnition === 0 ? 'bad' : 'warn')
+      : stat('All winds', `${rsw.noIgnition}/24`, rsw.complete ? 'scenarios hold' : `${rsw.checked}/24 checked`, !rsw.complete ? '' : rsw.ignited === 0 ? 'good' : rsw.noIgnition === 0 ? 'bad' : 'warn') : stat('All winds', '—', 'not checked')}${
     stat('Changes tested', `${new Set(applied.map((a) => a.fix)).size}`, 'applied together')}</div>` : '';
   const stale = fresh === 'stale' || fresh === 'legacy' ? `<div class="plan-stale"><span>${fresh === 'stale' ? 'Newer tests ran after this plan.' : 'This plan predates the latest checks.'}</span><button data-update-report>Update plan</button></div>` : '';
   const fixes = report?.fixes_ranked || [];
@@ -505,15 +512,20 @@ function renderAgent() {
   const DIR_NAMES = { 0: 'North', 45: 'Northeast', 90: 'East', 135: 'Southeast', 180: 'South', 225: 'Southwest', 270: 'West', 315: 'Northwest' };
   const cellLabel = (cell) => cell.verified ? (cell.outcome === 'no_ignition' ? ['✓', 'No ignition'] : ['🔥', `Ignition · ${cell.houseIgnitedAt}`])
     : cell.outcome === 'failed' ? ['✕', 'Failed to complete'] : cell.worker?.status === 'verifying' ? ['…', 'Awaiting verification'] : ['running', 'launching'].includes(cell.worker?.status) ? ['⟳', 'Running'] : ['–', 'Not run'];
-  paint('scenarioGrid', `<p class="matrix-summary"><strong>${extended.checked} / ${PLANNED_SCENARIOS} verified</strong> · <strong>${extended.holds} / ${PLANNED_SCENARIOS} without house ignition</strong></p><p class="matrix-note">Tested scenarios only — not a real-world survival probability. Click a cell to replay it on the model.</p><div class="matrix-scroll"><table class="scenario-matrix rows"><thead><tr><th scope="col">Wind from</th>${SEEDS.map((seed) => `<th scope="col">Trial ${seed}</th>`).join('')}<th scope="col">No ignition</th></tr></thead><tbody>${WINDS.map((wind) => {
+  const hasBefore = extended.baselineIgnited !== null;
+  const summary = hasBefore && extended.checked === PLANNED_SCENARIOS
+    ? `<strong>Original house: ${extended.baselineIgnited} / ${PLANNED_SCENARIOS} ignite</strong> → <strong>with changes: ${PLANNED_SCENARIOS - extended.holds} / ${PLANNED_SCENARIOS}</strong>`
+    : `<strong>${extended.checked} / ${PLANNED_SCENARIOS} verified</strong> · <strong>${extended.holds} / ${PLANNED_SCENARIOS} without house ignition</strong>`;
+  const beforeLine = (cell) => !hasBefore || cell.before === undefined ? '' : `<small class="cell-before" title="Original house, same scenario">before: ${cell.before ? esc(cell.before) : 'none'}</small>`;
+  paint('scenarioGrid', `<p class="matrix-summary">${summary}</p><p class="matrix-note">Each cell shows the house with changes${hasBefore ? '; “before” is the original house’s ignition time in the same scenario' : ''}. Tested scenarios only — not a real-world survival probability. Click a cell to replay it.</p><div class="matrix-scroll"><table class="scenario-matrix rows"><thead><tr><th scope="col">Wind from</th>${SEEDS.map((seed) => `<th scope="col">Trial ${seed}</th>`).join('')}<th scope="col">${hasBefore ? 'No ignition<br><small>before → after</small>' : 'No ignition'}</th></tr></thead><tbody>${WINDS.map((wind) => {
     const cells = SEEDS.map((seed) => extended.cells.find((item) => item.seed === seed && item.wind === wind));
     const d = byDir.find((x) => x.wind === wind);
     return `<tr><th scope="row" title="Wind from ${DIR_NAMES[wind]}"><abbr title="${DIR_NAMES[wind]}">${direction(wind)}</abbr></th>${cells.map((cell) => {
       const selected = selectedScenario?.wind === wind && selectedScenario?.seed === cell.seed;
       const [icon, text] = cellLabel(cell);
       const heat = cell.houseIgnitedAt ? Math.max(0.15, 1 - toSec(cell.houseIgnitedAt) / 90).toFixed(2) : 0;
-      return `<td><button class="scenario-cell ${cell.outcome} ${selected ? 'selected' : ''}" style="--heat:${heat}" data-scenario="${wind}:${cell.seed}" ${cell.verified ? '' : 'disabled'} aria-pressed="${selected}" aria-label="Wind from ${DIR_NAMES[wind]}, trial ${cell.seed}: ${esc(text)}"><span class="cell-icon" aria-hidden="true">${icon}</span>${esc(text)}</button></td>`;
-    }).join('')}<td class="dir-total ${!d.n ? '' : d.holds === d.n ? 'good' : d.holds === 0 ? 'bad' : 'warn'}">${d.n ? `${d.holds} / ${d.n}` : '—'}</td></tr>`;
+      return `<td><button class="scenario-cell ${cell.outcome} ${selected ? 'selected' : ''}" style="--heat:${heat}" data-scenario="${wind}:${cell.seed}" ${cell.verified ? '' : 'disabled'} aria-pressed="${selected}" aria-label="Wind from ${DIR_NAMES[wind]}, trial ${cell.seed}: ${esc(text)}"><span class="cell-icon" aria-hidden="true">${icon}</span>${esc(text)}${beforeLine(cell)}</button></td>`;
+    }).join('')}<td class="dir-total ${!d.n ? '' : d.holds === d.n ? 'good' : d.holds === 0 ? 'bad' : 'warn'}">${!d.n ? '—' : hasBefore ? `${cells.filter((c) => c.before === null).length} → ${d.holds} / ${d.n}` : `${d.holds} / ${d.n}`}</td></tr>`;
   }).join('')}</tbody></table></div>`);
   renderConsensus(extended);
   const timings = [
@@ -618,7 +630,7 @@ function renderScenarioDetail() {
   const matches = scenarioResult && scenarioResult.houseIgnitedAt === cell.houseIgnitedAt;
   const worker = cell.worker;
   const workerDetails = worker ? `<div class="worker-diagnosis"><p><b>Agent ${direction(cell.wind)} / seed ${cell.seed}</b> · ${durationLabel(worker.elapsed_seconds)}${worker.agent_agrees === false ? ' · agent claim disagreed; using local simulation' : ' · locally verified'}</p><p>${esc(worker.diagnosis || '')}</p>${worker.suggested_fixes?.length ? `<h4>Agent suggestions · not applied or re-tested</h4><ul>${worker.suggested_fixes.map((fix) => `<li>${esc(fixLabel(fix.title, fix.fix))}${fix.why ? ': ' + esc(fix.why) : ''}</li>`).join('')}</ul>` : ''}<details><summary>Independent managed-agent ID & timing</summary><code>${esc(worker.id)}</code><p>Startup ${durationLabel(worker.timings?.startup_seconds)} · remote execution ${durationLabel(worker.timings?.agent_seconds)} · local check ${durationLabel(worker.timings?.local_seconds)}</p></details></div>` : '';
-  paint('scenarioDetail', `<div class="scenario-detail-heading"><h3>Wind ${direction(cell.wind)} · seed ${cell.seed}</h3>${pill({ houseIgnited: cell.houseIgnitedAt !== null, houseIgnitedAt: cell.houseIgnitedAt })}</div><p>${scenarioResult ? matches ? 'Interactive replay reproduces the stored local result with the same wind, speed, and seed.' : 'The recalculated preview differs from the stored result. The matrix shows the original local verification.' : 'Loading the property snapshot for replay…'}</p>${scenarioResult ? chain(scenarioResult) || `<p>${scenarioResult.ignitedObjects.length} modeled objects ignited; the house did not.</p>` : ''}${workerDetails}<button id="replayScenario" ${matches ? '' : 'disabled'}>Replay this scenario in 3D ↗</button>`);
+  paint('scenarioDetail', `<div class="scenario-detail-heading"><h3>Wind ${direction(cell.wind)} · seed ${cell.seed}</h3>${pill({ houseIgnited: cell.houseIgnitedAt !== null, houseIgnitedAt: cell.houseIgnitedAt })}</div><p>${scenarioResult ? matches ? 'Interactive replay reproduces the stored local result with the same wind, speed, and seed.' : 'The recalculated preview differs from the stored result. The matrix shows the original local verification.' : 'Loading the property snapshot for replay…'}</p>${scenarioResult ? chain(scenarioResult) || `<p>${scenarioResult.ignitedObjects.length} modeled objects ignited; the house did not.</p>` : ''}${workerDetails}<div class="replay-pair"><button id="replayScenario" ${matches ? '' : 'disabled'}>Replay with changes ↗</button>${cell.before !== undefined ? `<button id="replayScenarioOriginal" ${matches ? '' : 'disabled'}>Replay original house ↗</button>` : ''}</div>`);
 }
 
 async function selectScenario(wind, seed) {
@@ -640,21 +652,36 @@ async function selectScenario(wind, seed) {
   } catch (error) { if (token === scenarioToken) paint('scenarioDetail', `<p class="empty-state">Could not prepare this replay: ${esc(error.message)}</p>`); }
 }
 
-async function replayScenario() {
+// The original house (before any change), fetched once per run for side-by-side scenario replays.
+let baseSpecCache = null;
+async function getBaseSpec() {
+  const id = runId, n = state?.base_spec;
+  if (n === undefined || n === null) return null;
+  if (baseSpecCache?.id !== id || baseSpecCache.n !== n) baseSpecCache = { id, n, spec: await api(`/api/runs/${id}/spec/${n}`) };
+  return baseSpecCache.spec;
+}
+
+// Replays the selected grid scenario on the house with changes (the swarm's property) or on the original house.
+async function replayScenario(kind = previewScenario?.kind || 'changes') {
   if (!selectedScenario || !scenarioSpec || !scenarioResult) return;
   const cell = extendedState()?.cells.find((item) => item.wind === selectedScenario.wind && item.seed === selectedScenario.seed);
   if (!cell?.verified || scenarioResult.houseIgnitedAt !== cell.houseIgnitedAt) return;
-  previewScenario = { ...cell };
+  const original = kind === 'original' && cell.before !== undefined;
+  const plan = original ? await getBaseSpec().catch(() => null) : scenarioSpec;
+  if (!plan) return;
+  previewScenario = { ...cell, kind: original ? 'original' : 'changes' };
   sceneRequest++;
-  keepCamera(() => showSpec(scenarioSpec));
+  keepCamera(() => showSpec(plan));
   $('version').value = 'extended';
-  sim = new Sim(scenarioSpec, { windFrom: cell.wind, seed: cell.seed, mph: state.agent.mph ?? state.conditions?.mph ?? 30, duration: state.agent.duration || 90 });
+  sim = new Sim(plan, { windFrom: cell.wind, seed: cell.seed, mph: state.agent.mph ?? state.conditions?.mph ?? 30, duration: state.agent.duration || 90 });
   simView = new SimView(scene, built, sim);
   $('play').innerHTML = '<span aria-hidden="true">↻</span> Replay selected scenario';
-  vp.querySelector('.viewer-badge').textContent = `SWARM SCENARIO · ${direction(cell.wind)} · SEED ${cell.seed}`;
-  $('segOriginal').classList.remove('on'); $('segChanges').classList.remove('on');
+  $('segOriginal').classList.toggle('on', original); $('segChanges').classList.toggle('on', !original);
+  const outcome = (t) => (t ? `ignites ${esc(t)}` : 'no ignition');
+  const both = cell.before === undefined ? `${cell.houseIgnitedAt ? `house ignites at ${esc(cell.houseIgnitedAt)}` : 'no house ignition'}`
+    : `<span class="${original ? 'on' : ''}">Original: ${outcome(cell.before)}</span> · <span class="${original ? '' : 'on'}">With changes: ${outcome(cell.houseIgnitedAt)}</span>`;
   $('scenarioChip').hidden = false;
-  $('scenarioChip').innerHTML = `Scenario: wind from <b>${direction(cell.wind)}</b> · trial ${cell.seed} · ${cell.houseIgnitedAt ? `house ignites at ${esc(cell.houseIgnitedAt)}` : 'no house ignition'} <button data-back-assessment>Back to assessment</button>`;
+  $('scenarioChip').innerHTML = `Wind from <b>${direction(cell.wind)}</b> · trial ${cell.seed} · ${both} <button data-back-assessment>Exit scenario</button>`;
   applyLayers();
 }
 
@@ -679,7 +706,8 @@ document.addEventListener('click', (event) => {
       if (runId === chosenRun) replayScenario();
     });
   }
-  if (event.target.closest('#replayScenario')) replayScenario();
+  if (event.target.closest('#replayScenario')) replayScenario('changes');
+  if (event.target.closest('#replayScenarioOriginal')) replayScenario('original');
 });
 document.addEventListener('click', async (event) => {
   const button = event.target.closest('[data-update-report]'); if (!button || !runId) return;
@@ -756,13 +784,13 @@ async function setVersion(kind) {
   if (n === undefined) return;
   try { const next = await api(`/api/runs/${runId}/spec/${n}`); keepCamera(() => showSpec(next)); $('version').value = n; applyLayers(); } catch (error) { notify(error.message); }
 }
-$('segOriginal').onclick = () => setVersion('original');
+$('segOriginal').onclick = () => (previewScenario ? replayScenario('original') : setVersion('original'));
 document.addEventListener('click', (e) => { if (e.target.closest('[data-back-assessment]')) setVersion('changes'); });
-$('segChanges').onclick = () => setVersion('changes');
+$('segChanges').onclick = () => (previewScenario ? replayScenario('changes') : setVersion('changes'));
 
 // Camera tools
 $('resetCam').onclick = () => { const c = spec?.cameras?.[0]; if (c) { camera.position.set(...c.pos); controls.target.set(...c.lookAt); } else { camera.position.set(90, 80, 110); controls.target.set(0, 5, 0); } };
-$('topView').onclick = () => { controls.target.set(0, 0, 0); camera.position.set(0.01, 190, 0.01); };
+$('topView').onclick = () => { controls.target.set(0, 0, 0); camera.position.set(0, 190, 0.01); }; // north-up: the camera sits just south of straight overhead
 $('fullscreen').onclick = () => { const shell = $('viewerShell'); if (document.fullscreenElement) document.exitFullscreen(); else shell.requestFullscreen?.(); };
 document.addEventListener('fullscreenchange', () => requestAnimationFrame(resize));
 

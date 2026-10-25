@@ -39,6 +39,24 @@ def sandbox_files(spec):
     return files
 
 
+async def baseline_grid(run, mph=None):
+    """The same 24 scenarios on the original house (before any change), simulated locally, so the
+    all-wind result can be read as before -> after. Deterministic; takes seconds, no agents involved."""
+    base = run.state.get("base_spec")
+    if base is None:
+        return None
+    path = run.spec_path(base)
+    sem = asyncio.Semaphore(8)
+
+    async def one(wind, seed):
+        async with sem:
+            result = await asyncio.to_thread(tools.simulate, path, wind, seed, mph or run.mph)
+        return {"wind": wind, "seed": seed, "houseIgnitedAt": result.get("houseIgnitedAt") if result.get("houseIgnited") else None}
+
+    grid = await asyncio.gather(*(one(wind, seed) for seed in SEEDS for wind in WINDS))
+    return {"spec_n": base, "grid": list(grid), "ignited": sum(1 for c in grid if c["houseIgnitedAt"])}
+
+
 def new_state(run, concurrency=None):
     cap = concurrency if concurrency is not None else int(os.getenv("ZZ_SWARM_CONCURRENCY", "24"))
     return {"id": f"swarm-{uuid.uuid4().hex[:10]}", "type": "swarm", "status": "queued",
@@ -161,8 +179,13 @@ async def run_swarm(run, *, concurrency=None, poll_interval=3, timeout=None):
                         case["cancel_error"] = str(cancel_error)[:300]
                 await run.emit("agent", f"Agent {case['key']}: {type(error).__name__}: {error}", "warn", scenario=case["key"])
 
+        baseline = asyncio.create_task(baseline_grid(run, swarm["mph"]))
         workers = [asyncio.create_task(worker(case)) for case in swarm["workers"]]
         await asyncio.gather(*workers)
+        try:
+            swarm["baseline"] = await baseline
+        except Exception as error:  # the before-grid is context; never fail the swarm over it
+            swarm["baseline_error"] = str(error)[:300]
         count = len(swarm["local_check"]["grid"])
         swarm.update(status="completed" if count == 24 else "partial" if count else "failed", finished=time.time())
         swarm["timings"]["total_seconds"] = round(swarm["finished"] - launched, 2)

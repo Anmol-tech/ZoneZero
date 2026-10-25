@@ -2,6 +2,7 @@
 import * as THREE from "three";
 import { wallPoint, wallLength } from "../sim/nodes.js";
 import { FireFX } from "./fire.js";
+import { propMesh } from "./props.js";
 import { wallTexture, roofTexture, groundTexture, boardsTexture, skyTexture, meshTexture, latticeTexture, gableTexture, SIDING_COLORS, ROOF_COLORS, hashStr, rng, shade } from "./textures.js";
 
 const COLORS = {
@@ -464,11 +465,12 @@ export function buildScene(spec) {
           for (const sx of [-1, 1]) for (const sz of [-1, 1]) { const wh = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.2, 0.8, 12), mat(0x111111)); wh.rotation.z = Math.PI / 2; wh.position.set(sx * 2.9, 1.2, sz * 4.5); g.add(wh); }
           g.traverse((c) => (c.castShadow = true));
         } else {
-          const size = { patio_furniture: [3, 2.5, 3], trash_bin: [2, 3.2, 2], propane_tank: [1.4, 3, 1.4], doormat: [3, 0.1, 2], planter: [2, 2, 2] }[o.objKind];
-          const m = new THREE.Mesh(o.objKind === "propane_tank" ? new THREE.CylinderGeometry(0.7, 0.7, 3, 12) : new THREE.BoxGeometry(...size), mat(COLORS.obj[o.material]));
-          m.position.y = size[1] / 2; m.castShadow = true; g.add(m);
+          g.add(propMesh(o, COLORS.obj, hashStr(o.id)));
+          // A planter at a table's spot is a tabletop centerpiece: lift it onto the table, smaller.
+          const table = o.objKind === "planter" && spec.objects.find((t) => ["table", "dining_set", "coffee_table"].includes(t.item) && Math.hypot(t.x - o.x, t.z - o.z) < 1.5);
+          if (table) { g.position.y = table.item === "coffee_table" ? 1.35 : 2.5; g.scale.setScalar(0.45); }
         }
-        g.position.set(o.x, 0, o.z); reg(o.id, g);
+        g.position.x = o.x; g.position.z = o.z; reg(o.id, g);
         break;
       }
     }

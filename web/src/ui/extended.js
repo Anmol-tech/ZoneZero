@@ -14,11 +14,14 @@ export function extendedSummary(agent, events = [], now = Date.now() / 1000) {
     const worker = agent.workers?.find((item) => item.wind === wind && item.seed === seed);
     const row = agent.local_check?.grid?.find((item) => item.wind === wind && item.seed === seed);
     const verified = Boolean(row && Object.hasOwn(row, 'houseIgnitedAt'));
-    return { wind, seed, worker, verified, houseIgnitedAt: verified ? row.houseIgnitedAt : undefined,
+    // The same scenario on the original house (before any change), when the server computed it.
+    const base = agent.baseline?.grid?.find((item) => item.wind === wind && item.seed === seed);
+    return { wind, seed, worker, verified, houseIgnitedAt: verified ? row.houseIgnitedAt : undefined, before: base ? base.houseIgnitedAt : undefined,
       outcome: !verified ? ['failed', 'cancelled'].includes(worker?.status) ? 'failed' : ['launching', 'running', 'verifying'].includes(worker?.status) ? 'running' : 'pending' : row.houseIgnitedAt === null ? 'no_ignition' : 'ignited' };
   }));
   const checked = cells.filter((cell) => cell.verified).length;
   const holds = cells.filter((cell) => cell.outcome === 'no_ignition').length;
+  const baselineIgnited = agent.baseline?.grid?.length ? agent.baseline.grid.filter((c) => c.houseIgnitedAt).length : null;
   const status = String(agent.status || 'launching').toLowerCase();
   let phase = agent.local_check && checked === 24 ? 'complete'
     : status === 'partial' ? 'partial'
@@ -28,7 +31,7 @@ export function extendedSummary(agent, events = [], now = Date.now() / 1000) {
     : ['queued', 'launching'].includes(status) || agent.type === 'swarm' && !agent.workers?.some((worker) => worker.id) ? 'launching'
     : agent.id ? 'searching' : 'launching';
   const finished = agent.finished ?? done?.t ?? failure?.t;
-  return { cells, checked, holds, phase, active: !['complete', 'failed', 'partial', 'cancelled'].includes(phase),
+  return { cells, checked, holds, baselineIgnited, phase, active: !['complete', 'failed', 'partial', 'cancelled'].includes(phase),
     launched, finished, elapsed: launched ? Math.max(0, (finished ?? now) - launched) : 0,
     isSwarm: agent.type === 'swarm',
     running: agent.workers?.filter((worker) => ['launching', 'running', 'verifying'].includes(worker.status)).length || 0,

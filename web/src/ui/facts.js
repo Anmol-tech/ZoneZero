@@ -28,7 +28,9 @@ export function resultFacts(state) {
   const agent = state.agent;
   if (agent?.type === 'swarm' && agent.local_check?.grid?.length) {
     const checked = agent.local_check.grid.length, noIgnition = agent.local_check.survives;
-    facts.swarm = { id: agent.id, checked, noIgnition, ignited: checked - noIgnition, complete: checked === PLANNED_SCENARIOS };
+    facts.swarm = { id: agent.id, checked, noIgnition, ignited: checked - noIgnition, complete: checked === PLANNED_SCENARIOS,
+      // Same 24 scenarios on the original house, so the all-wind result reads before -> after.
+      baselineIgnited: agent.baseline?.grid?.length ? agent.baseline.grid.filter((c) => c.houseIgnitedAt).length : null };
   }
   return facts;
 }
@@ -38,7 +40,7 @@ export function verdict(facts) {
   if (!facts?.hasBaseline) return null;
   const sw = facts.swarm;
   if (sw && !sw.complete) return { tone: 'neutral', title: `All-wind check incomplete: ${sw.checked} of ${PLANNED_SCENARIOS} scenarios verified` };
-  if (sw && sw.ignited === 0) return { tone: 'success', title: `No house ignition observed in any of ${PLANNED_SCENARIOS} tested scenarios` };
+  if (sw && sw.ignited === 0) return { tone: 'success', title: `No house ignition observed in any of ${PLANNED_SCENARIOS} tested scenarios${facts.tested ? ' after changes' : ''}` };
   if (sw) {
     const helped = facts.tested && (facts.finalS === null || (facts.baselineS !== null && facts.finalS > facts.baselineS));
     return { tone: sw.noIgnition === 0 ? 'danger' : 'warning',

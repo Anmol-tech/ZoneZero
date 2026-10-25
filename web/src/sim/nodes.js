@@ -23,6 +23,8 @@ const PLANT = {
   conifer: { f: 0.8, trap: 0.45, heat: 1.1, fuel: 70 },
   grass: { f: 0.85, trap: 0.35, heat: 0.35, fuel: 8 },
 };
+// Footprint radius (ft) of the larger furniture pieces; others use the patio_furniture default.
+const ITEM_R = { sofa: 3.3, dining_set: 4, table: 3, bench: 2.5, umbrella: 1 };
 const OBJ = {
   patio_furniture: { r: 2, y: 1.5, heat: 0.55, fuel: 40, trap: 0.4 },
   trash_bin: { r: 1.5, y: 1.5, heat: 0.45, fuel: 30, trap: 0.3 },
@@ -157,7 +159,7 @@ export function buildNodes(spec) {
         add({ obj: o.id, label: "firewood pile", part: "firewood", p: [o.x, 1.5, o.z], r: 2.2, f: 0.8, trap: 0.6, heat: 1.0, fuel: 150 });
         break;
       case "object": {
-        const d = OBJ[o.objKind];
+        const d = o.objKind === "patio_furniture" && ITEM_R[o.item] ? { ...OBJ[o.objKind], r: ITEM_R[o.item] } : OBJ[o.objKind];
         const f = o.objKind === "car" ? 0.15 : o.objKind === "propane_tank" ? 0.2 : OBJ_F[o.material];
         if (f > 0) add({ obj: o.id, label: o.objKind.replace("_", " "), part: "object", p: [o.x, d.y, o.z], r: d.r, f, trap: d.trap, heat: d.heat, fuel: d.fuel });
         break;
