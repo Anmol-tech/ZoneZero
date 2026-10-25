@@ -18,7 +18,7 @@ const PIN = { risk: "#d63a1c", fix: "#17855a" };
 
 // Small numbered pins at hazard/fix locations. The highlighted group also gets
 // its full label beside each of its pins.
-export function drawPins(ctx, pins, { highlight = null, alpha = 1 } = {}) {
+export function drawPins(ctx, pins, { highlight = null, alpha = 1, labels = false } = {}) {
   ctx.save();
   ctx.globalAlpha = alpha;
   ctx.textAlign = "center"; ctx.textBaseline = "middle";
@@ -34,7 +34,7 @@ export function drawPins(ctx, pins, { highlight = null, alpha = 1 } = {}) {
     ctx.lineWidth = 2; ctx.strokeStyle = "#fff"; ctx.stroke();
     ctx.fillStyle = "#fff"; ctx.font = `700 ${hot ? 12 : 10}px system-ui, sans-serif`;
     if (!p.behind || hot) ctx.fillText(p.type === "fix" ? "✓" : String(p.n), p.x, p.y + 0.5);
-    if (hot) {
+    if (hot || (labels && !p.behind)) {
       ctx.font = "600 12px system-ui, sans-serif"; ctx.textAlign = "left";
       const text = p.label, w = ctx.measureText(text).width + 14;
       const x = Math.min(p.x + 16, ctx.canvas.width / (window.devicePixelRatio || 1) - w - 4);

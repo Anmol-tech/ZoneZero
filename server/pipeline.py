@@ -250,15 +250,67 @@ def swarm_summary(run: Run):
             "fixes_suggested_by_agents": sorted(votes.items(), key=lambda kv: -kv[1])[:6]}
 
 
-async def stage_report(run: Run, before: dict, after: dict):
+def _secs(t):
+    if not t:
+        return None
+    m, s = t.split(":")
+    return int(m) * 60 + int(s)
+
+
+def _fmt(sec):
+    return "no house ignition" if sec is None else f"{sec} s"
+
+
+def result_facts(run: Run) -> dict:
+    """Numeric facts every summary must agree on. Computed here, never by the language model."""
+    # Every round at the originally tested wind counts (fix rounds and same-wind tests); other directions don't.
+    rounds = run.state.get("fix_rounds", [])
+    tested_wind = rounds[0]["wind"] if rounds else run.wind
+    fix_rounds = [r for r in rounds if r.get("wind", tested_wind) == tested_wind]
+    sims = run.state.get("sims", [])
+    base = fix_rounds[0]["before"] if fix_rounds else (sims[0]["result"] if sims else None)
+    final = fix_rounds[-1]["after"] if fix_rounds else base
+    b, f = (_secs(base["houseIgnitedAt"]) if base else None), (_secs(final["houseIgnitedAt"]) if final else None)
+    facts = {"wind": run.wind, "mph": run.mph, "duration_s": 90, "baseline_ignition_s": b, "final_ignition_s": f,
+             "fix_rounds": len(fix_rounds), "final_spec": run.state.get("final_spec")}
+    if b is not None and f is not None:
+        facts["delay_s"] = f - b
+    sw = run.state.get("agent")
+    if sw and sw.get("type") == "swarm" and sw["local_check"]["grid"]:
+        checked = len(sw["local_check"]["grid"])
+        facts["swarm"] = {"id": sw["id"], "checked": checked, "planned": 24, "no_ignition": sw["local_check"]["survives"],
+                          "ignited": checked - sw["local_check"]["survives"], "complete": checked == 24}
+    return facts
+
+
+def facts_text(f: dict) -> str:
+    lines = [f"Tested wind: from {f['wind']} degrees at {f['mph']} mph for {f['duration_s']} s of simulated exposure.",
+             f"Before fixes: {_fmt(f['baseline_ignition_s'])}{' (house ignition time)' if f['baseline_ignition_s'] is not None else ''}.",
+             f"After the tested set of fixes: {_fmt(f['final_ignition_s'])}{' (house ignition time)' if f['final_ignition_s'] is not None else ''}."]
+    if f.get("delay_s") is not None:
+        lines.append(f"Ignition happened {f['delay_s']} s later after the fixes; the house still ignited.")
+    sw = f.get("swarm")
+    if sw:
+        lines.append(f"All-wind check: {sw['checked']} of {sw['planned']} scenarios checked; house ignited in {sw['ignited']}, "
+                     f"no house ignition in {sw['no_ignition']}" + ("" if sw["complete"] else " (INCOMPLETE)") + ".")
+    else:
+        lines.append("Other wind directions were not checked.")
+    return "\n".join(lines)
+
+
+async def stage_report(run: Run, before: dict | None = None, after: dict | None = None):
     await run.emit("report", "Writing the homeowner report…", "running")
-    steps = [{"applied": [a["title"] for a in s["applied"]], "after": s["after"]["houseIgnitedAt"] or "survives"} for s in run.state["fix_rounds"]]
+    facts = result_facts(run)
+    applied = sorted({a["fix"] for r in run.state.get("fix_rounds", []) for a in r.get("applied", [])})
     rep, _ = await asyncio.to_thread(g.ask_json, [g.text(P.REPORT.format(
-        summary=(run.inventory or {}).get("summary", "demo property"), winds=f"{run.wind}° at {run.mph} mph",
-        before=json.dumps(before["result"]), steps=json.dumps(steps), after=json.dumps(after["result"]), catalog=json.dumps(CATALOG),
-        swarm=json.dumps(swarm_summary(run))))],
+        summary=(run.inventory or {}).get("summary", "demo property"), facts=facts_text(facts),
+        tested=json.dumps(applied), catalog=json.dumps(CATALOG), swarm=json.dumps(swarm_summary(run))))],
         model=g.FLASH, thinking="low")
     run.state["report"] = rep
+    # Provenance: which evidence this plan was written from, so the UI can flag it once newer tests exist.
+    run.state["report_scope"] = {"created": round(time.time()), "spec_n": run.state.get("final_spec"),
+                                 "sims": len(run.state.get("sims", [])), "swarm_id": (facts.get("swarm") or {}).get("id"),
+                                 "swarm_checked": (facts.get("swarm") or {}).get("checked", 0), "facts": facts}
     await run.emit("report", rep.get("headline", "Report ready"), "done", report=rep)
 
 

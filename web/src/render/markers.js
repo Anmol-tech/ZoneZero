@@ -66,8 +66,9 @@ export function groupMarkers(markers) {
   for (const m of markers) {
     const label = m.text.replace(/^[⚠✓]\s*/, "");
     const key = `${m.type}:${label}`;
-    if (!groups.has(key)) groups.set(key, { key, label, type: m.type, positions: [] });
+    if (!groups.has(key)) groups.set(key, { key, label, type: m.type, positions: [], ids: [] });
     groups.get(key).positions.push(m.pos);
+    groups.get(key).ids.push(m.id);
   }
   const list = [...groups.values()].sort((a, b) => (a.type === b.type ? 0 : a.type === "risk" ? -1 : 1));
   list.forEach((g, i) => { g.n = i + 1; });

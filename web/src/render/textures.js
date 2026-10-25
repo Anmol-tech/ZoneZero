@@ -128,7 +128,7 @@ export function groundTexture(kind) {
   return tex(`ground:${kind}`, () => {
     const [c, ctx] = canvas(256, 256);
     const r = rng(hashStr(kind));
-    const base = { grass: "#56703a", driveway: "#b9b4ab", path: "#c2bbb0", patio: "#a59c90", street: "#3d3f42", bark: "#5a3a24", gravel: "#9a968e", dirt: "#7a6448" }[kind];
+    const base = { grass: "#7a8763", driveway: "#b9b4ab", path: "#c2bbb0", patio: "#a59c90", street: "#3d3f42", bark: "#5a3a24", gravel: "#9a968e", dirt: "#7a6448" }[kind];
     ctx.fillStyle = base; ctx.fillRect(0, 0, 256, 256);
     const n = kind === "grass" ? 9000 : 5000;
     for (let i = 0; i < n; i++) {
@@ -196,7 +196,7 @@ export function skyTexture() {
   return tex("sky", () => {
     const [c, ctx] = canvas(4, 256);
     const g = ctx.createLinearGradient(0, 0, 0, 256);
-    g.addColorStop(0, "#7fa6d1"); g.addColorStop(0.55, "#c9dbe9"); g.addColorStop(1, "#e9eef0");
+    g.addColorStop(0, "#c4d6e3"); g.addColorStop(0.55, "#e6edf0"); g.addColorStop(1, "#f5f4ef");
     ctx.fillStyle = g; ctx.fillRect(0, 0, 4, 256);
     return c;
   });

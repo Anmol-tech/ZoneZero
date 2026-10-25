@@ -2,9 +2,10 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { buildScene, addLights, SimView, configureRenderer } from '../render/build3d.js';
 import { Sim, fmtTime } from '../sim/embers.js';
-import { CATALOG } from '../sim/mitigations.js';
+import { CATALOG, applyFixes } from '../sim/mitigations.js';
 import { createKit } from '../kit/spec.js';
 import { PHASES, assessmentSummary, phaseStates } from './assessment.js';
+import { resultFacts, verdict, testedWindLine, scopeLine, reportFreshness, fixInTestedSet, PLANNED_SCENARIOS } from './facts.js';
 import { computeMarkers, groupMarkers, projectPins } from '../render/markers.js';
 import { drawPins, overviewCamera } from '../render/views.js';
 import { WINDS, SEEDS, extendedSummary, durationLabel } from './extended.js';
@@ -105,16 +106,18 @@ function showSpec(next, illustrative = false) {
 }
 function animate(now) {
   const dt = Math.min(0.1, (now - last) / 1000); last = now;
-  if (currentTab === 'model' && !document.hidden) {
-    if (sim && !sim.done) {
-      acc += dt * 3;
+  if (!document.hidden) {
+    if (sim && !sim.done && !paused) {
+      acc += dt * (+$('simSpeed').value || 3);
       while (acc >= sim.opts.dt && !sim.done) { sim.step(); acc -= sim.opts.dt; }
       simView.update(dt);
+      $('simTimeline').value = sim.t; $('simClock').textContent = `${fmtTime(sim.t)} / ${fmtTime(sim.opts.duration)}`;
       $('simStatus').textContent = `Preview ${fmtTime(sim.t)} · ` + (sim.houseIgnitedAt !== null ? `House ignited at ${fmtTime(sim.houseIgnitedAt)}` : sim.done ? 'No house ignition in this preview' : 'No house ignition yet');
       if (sim.done) $('play').innerHTML = previewScenario ? '<span aria-hidden="true">↻</span> Replay selected scenario' : '<span aria-hidden="true">↻</span> Replay ember test';
     }
     if (flight) stepFlight(dt);
     controls.update(); renderer.render(scene, camera);
+    updateCompass();
     drawLabels();
   }
   requestAnimationFrame(animate);
@@ -128,7 +131,7 @@ function drawLabels() {
   ctx.scale(devicePixelRatio, devicePixelRatio);
   const w = overlay.width / devicePixelRatio, h = overlay.height / devicePixelRatio;
   pins = projectPins(groups, camera, w, h, THREE, labelFilter, built?.byObj.get('house'));
-  drawPins(ctx, pins, { highlight: hoverKey || legendKey, alpha: sim && sim.t > 6 && !sim.done ? 0.7 : 1 });
+  drawPins(ctx, pins, { highlight: hoverKey || legendKey || selectedKey, alpha: sim && sim.t > 6 && !sim.done ? 0.7 : 1, labels: $('layerLabels').checked });
 }
 // Legend: one row per hazard/fix type, numbered to match the pins in the view.
 function renderLegend() {
@@ -201,10 +204,11 @@ $('play').onclick = () => {
   $('play').innerHTML = '<span aria-hidden="true">↻</span> Restart preview';
 };
 function openTab(name) {
+  if (name === 'model') name = 'sims';
   currentTab = name;
   document.querySelectorAll('[data-tab]').forEach((button) => { const active = button.dataset.tab === name; button.classList.toggle('on', active); button.setAttribute('aria-selected', String(active)); });
   document.querySelectorAll('.tab').forEach((panel) => { const active = panel.id === `tab-${name}`; panel.classList.toggle('on', active); panel.hidden = !active; });
-  if (name === 'model') resize();
+  resize();
 }
 document.querySelectorAll('[data-tab]').forEach((button) => { button.onclick = () => openTab(button.dataset.tab); });
 $('version').onchange = async () => {
@@ -255,7 +259,7 @@ function listen(activeEpoch = epoch) {
     if (activeEpoch !== epoch) return;
     const event = JSON.parse(message.data);
     if (events.has(event.i)) return;
-    events.set(event.i, event);
+    events.set(event.i, event); window.__zzEvents = events;
     if (event.inventory && state) state.inventory = event.inventory;
     renderActivity();
     clearTimeout(refreshTimer); refreshTimer = setTimeout(() => refresh(activeEpoch), 120);
@@ -288,11 +292,15 @@ async function start(mode) {
     data.append('video', file);
   } else if (mode === 'stock') data.append('sample', 'stock');
   data.append('wind', $('wind').value);
-  loading = true; setBusy(); notify();
+  if ($('swarmToggle').checked) data.append('swarm', '1');
+  loading = true; setBusy(); notify(); setSetup(false);
   try { const response = await api('/api/runs', { method: 'POST', body: data }); await loadRun(response.id); }
   catch (error) { notify(`Could not start the assessment. ${error.message}`); }
   finally { loading = false; setBusy(); }
 }
+// Remember the all-wind opt-in on this device (it stays opt-in by default).
+try { $('swarmToggle').checked = localStorage.getItem('zz.swarm') === '1'; } catch { /* storage unavailable */ }
+$('swarmToggle').onchange = () => { try { localStorage.setItem('zz.swarm', $('swarmToggle').checked ? '1' : '0'); } catch { /* storage unavailable */ } };
 $('video').onchange = () => { $('videoName').textContent = $('video').files[0]?.name || ''; notify(); };
 $('start').onclick = () => start('upload');
 $('sample').onclick = () => start('stock');
@@ -313,8 +321,8 @@ function renderObservations() {
   $('featureCount').textContent = objects.length;
   paint('chips', objects.length ? objects.map((object) => {
     const timestamp = object.seen_at?.[0];
-    return `<details class="feature"><summary><span class="feature-name"><strong>${esc(featureTitle(object))}</strong><small>${esc(object.material || object.kind)}</small></span>${timestamp ? `<button class="seek" data-seek="${esc(timestamp)}" aria-label="Play footage at ${esc(timestamp)}">${esc(timestamp)} ↗</button>` : ''}</summary><p>${esc(object.description)}</p>${object.ember_risk ? `<p class="risk-note">${esc(object.ember_risk)}</p>` : ''}</details>`;
-  }).join('') : empty(state && !state.video && state.spec_versions.length ? 'Illustrative property. No video survey was performed.' : 'Features appear here after the agent reviews the footage.'));
+    return `<details class="feature" data-kind="${esc(object.kind)}"><summary><span class="feature-name"><strong>${esc(featureTitle(object))}</strong><small>${timestamp ? `Seen at ${esc(timestamp)} · Added to model` : 'Added to model'}${object.material ? ` · ${esc(object.material)}` : ''}</small></span>${timestamp ? `<button class="seek" data-seek="${esc(timestamp)}" aria-label="Play footage at ${esc(timestamp)}">${esc(timestamp)} ↗</button>` : ''}</summary><p>${esc(object.description)}</p>${object.ember_risk ? `<p class="risk-note">${esc(object.ember_risk)}</p>` : ''}</details>`;
+  }).join('') + (inventory?.uncertain || []).map((gap) => `<div class="feature gap"><span class="feature-name"><strong>${esc(gap)}</strong><small>Not visible · Coverage gap</small></span></div>`).join('') : empty(state && !state.video && state.spec_versions.length ? 'Illustrative property. No video survey was performed.' : 'Observations appear here as the footage is reviewed.'));
   const unknowns = inventory?.uncertain || [];
   $('uncertainCount').textContent = unknowns.length ? `${unknowns.length} notes` : '';
   paint('coverageContent', unknowns.length ? `<p>Only visible features can be assessed. Unseen areas remain uncertain.</p><ul>${unknowns.map((note) => `<li>${esc(note)}</li>`).join('')}</ul>` : `<p>${state?.source?.coverage ? esc(state.source.coverage) + '. ' : ''}A complete walk-around gives the agent more evidence. Unseen materials and elevations cannot be verified.</p>`);
@@ -322,6 +330,12 @@ function renderObservations() {
   const source = state?.source;
   paint('sourceCaption', source?.credit ? `${esc(source.name)} · ${Math.round(state.video_duration || 20)}s<br><a href="${esc(safeLink(source.url))}" target="_blank" rel="noreferrer">${esc(source.credit)}</a> · ${esc(source.coverage)}` : state?.video ? 'Original input footage. The model is based on what the camera can see.' : 'Upload a walk-around video, or try the house-and-patio sample.');
 }
+$('chips').addEventListener('toggle', (event) => {
+  const row = event.target.closest?.('details.feature'); if (!row || !row.open) return;
+  const kind = row.dataset.kind, words = KIND_WORDS.filter(([, k]) => k === kind).map(([w]) => w);
+  const group = groups.find((g) => words.some((w) => g.label.toLowerCase().includes(w)));
+  if (group) openHazardCard(group);
+}, true);
 $('chips').addEventListener('click', (event) => {
   const button = event.target.closest('[data-seek]'); if (!button) return;
   event.preventDefault(); event.stopPropagation();
@@ -339,20 +353,39 @@ function renderTakeaway(summary) {
     label = 'LATEST SIMULATION RESULT';
     description = latest.result.houseIgnited ? 'A path to the house remains in the latest test. Review the ignition chain and the action plan.' : applied.length ? 'The agent changed the model and re-ran the simulation. These are simulated improvements, not physical work.' : (latest.result.ignited || []).length ? 'Nearby fuels still caught fire. The agent suggested improvements, but did not apply or re-test them.' : 'No ignition was observed under these conditions. This does not establish safety under other conditions.';
   }
-  // The takeaway answers the question directly: the honest headline (the report's, which includes the
-  // all-winds result when the swarm ran), the all-winds verdict, and the top three fixes with cost.
+  // Result band: precise conclusion from recorded numbers, scope, three metrics, and "Do these first".
   const report = state?.report;
-  const swarm = state?.agent?.type === 'swarm' && state.agent.local_check?.grid?.length ? state.agent : null;
-  if (report?.headline && state?.status === 'done') { title = report.headline; label = 'YOUR ASSESSMENT'; description = ''; }
-  const checked = swarm ? swarm.local_check.grid.length : 0, holds = swarm ? swarm.local_check.survives : 0;
-  const verdict = swarm ? `<div class="swarm-verdict ${holds === checked ? 'good' : 'bad'}"><strong>${holds}/${checked}</strong><span>wind tests hold<small>8 directions × 3 seeds</small></span><button data-open-tab="sims">See all ↗</button></div>` : '';
-  // The card's color follows the all-winds verdict when there is one, not just the single-wind test.
-  const cardTone = swarm ? (holds === checked ? 'success' : holds === 0 ? 'danger' : 'warning') : tone;
+  const facts = resultFacts(state);
+  const v = state?.status === 'done' ? verdict(facts) : null;
+  const sw = facts?.swarm;
+  const appliedIds = new Set(applied.map((item) => item.fix));
+  const freshness = reportFreshness(state);
   const top = (report?.fixes_ranked || []).slice(0, 3);
-  const fixes = top.length ? `<ol class="takeaway-fixes">${top.map((fix) => `<li><span>${esc(fixLabel(fix.title))}</span><b title="Rough relative cost">${esc(fix.cost)}</b></li>`).join('')}</ol><button class="takeaway-report" data-open-tab="report">Open the full action plan ↗</button>` : '';
-  paint('resultSummary', `<section class="result-card ${cardTone}"><span class="result-label">${label}</span><h3>${esc(title)}</h3>${description ? `<p>${esc(description)}</p>` : ''}${verdict}${top.length ? '<h4 class="takeaway-subhead">Do these first</h4>' : ''}${fixes}</section>`);
-  // With a report, the card above already lists the priorities; keep the long list only as a fallback.
+  const fmtT = (sec) => (sec === null ? 'None observed' : `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`);
+  if (!state) {
+    paint('resultSummary', `<div class="band tone-neutral band-compact"><div class="band-main"><span class="band-label">Illustrative property</span><h1>Sample results — not an assessment of your home</h1><p class="band-scope">Click a numbered marker to see why it matters, or start an assessment with your own walkthrough.</p></div><div class="band-cta"><button class="primary" data-open-setup>New assessment</button></div></div>`);
+  } else if (!v) {
+    const events = [...(window.__zzEvents?.values?.() || [])];
+    const statuses = phaseStates(state, events);
+    const swNow = state.agent?.type === 'swarm' ? (state.agent.local_check?.grid?.length || 0) : null;
+    paint('resultSummary', `<div class="band tone-${state.status === 'error' ? 'danger' : 'neutral'}"><div class="band-main"><span class="band-label">${state.status === 'error' ? 'Needs attention' : 'Assessment in progress'}</span><h1>${esc(state.status === 'error' ? title : (PHASES[statuses.indexOf('active')]?.title || 'Starting') + '…')}</h1><p class="band-scope">Finished sections are usable below while the rest runs.${swNow !== null && state.agent.status !== 'completed' ? ` · ${swNow} of 24 scenarios verified` : ''}</p></div><ol class="stage-list">${PHASES.map((ph, i) => `<li class="${statuses[i]}"><span>${statuses[i] === 'complete' ? '✓' : i + 1}</span>${esc(ph.title)}</li>`).join('')}</ol></div>`);
+  } else {
+    const metric = (label, value, sub, cls = '', extra = '') => `<div class="metric ${cls}"><span class="metric-label">${label}</span><strong class="metric-value">${value}</strong><span class="metric-sub">${sub}</span>${extra}</div>`;
+    const selected = facts.tested
+      ? metric('Selected test', `${fmtT(facts.baselineS)} → ${facts.finalS === null ? 'None' : fmtT(facts.finalS)}`, `Ignition at ${fmtT(facts.baselineS)} before → ${facts.finalS === null ? 'none observed' : fmtT(facts.finalS)} after changes · wind from ${direction(facts.wind)}`, facts.finalS === null ? 'good' : 'bad')
+      : metric('Selected test', fmtT(facts.baselineS), 'House ignition · no changes tested', facts.baselineS === null ? 'good' : 'bad');
+    const allWind = sw
+      ? metric('All-wind check', `${sw.noIgnition} / ${PLANNED_SCENARIOS}`, `without house ignition · ${sw.checked}/${PLANNED_SCENARIOS} verified`, !sw.complete ? 'muted' : sw.ignited === 0 ? 'good' : sw.noIgnition === 0 ? 'bad' : 'warn', '<button class="link" data-open-tab="sims">See all scenarios</button>')
+      : metric('All-wind check', 'Not run', 'Only one wind direction was tested', 'muted', '<button class="link" data-run-swarm>Run all-wind check</button>');
+    const nFix = new Set(applied.map((a) => a.fix)).size;
+    const changes = metric('Changes tested', `${nFix}`, nFix ? `${nFix === 1 ? 'change' : 'changes'} applied together in the model` : 'none applied yet');
+    const stale = freshness === 'stale' || freshness === 'legacy' ? `<p class="stale-note">${freshness === 'stale' ? 'This plan was prepared before the latest tests.' : 'This plan predates these checks.'} <button data-update-report>Update action plan</button></p>` : '';
+    const first = top.length ? `<div class="first-row"><span class="first-title">Do these first</span>${top.map((fix, i) => { const t = fixInTestedSet(fix, appliedIds, CATALOG); return `<button class="first-item" data-show-fix="${esc(fix.fix_id || '')}" data-title="${esc(fix.title)}" title="Show on model"><b>${i + 1}</b><span>${esc(fixLabel(fix.title, fix.fix_id))}</span><em class="cost">${esc(fix.cost)}</em><em class="${t ? 'tested' : 'untested'}">${t ? 'In tested set' : 'Suggested · Not tested'}</em></button>`; }).join('')}<button class="link" data-open-tab="report">Full action plan</button></div>` : '';
+    paint('resultSummary', `<div class="band tone-${v.tone}"><div class="band-main"><span class="band-label">Result</span><h1>${esc(v.title)}</h1><p class="band-scope">${esc(scopeLine(facts, direction).replace(/ · 90 s$/, ''))} · 90-second simulation</p>${stale}</div><div class="metrics">${selected}${allWind}${changes}</div>${first}</div>`);
+  }
   document.querySelector('.next-steps').hidden = Boolean(top.length);
+  document.body.classList.toggle('has-run', Boolean(state));
+  document.body.classList.toggle('no-video', !state?.video);
   if (previewScenario) {
     const cell = previewScenario;
     paint('resultSummary', `<section class="result-card ${cell.houseIgnitedAt === null ? 'success' : 'danger'}"><span class="result-label">SWARM SCENARIO · ${direction(cell.wind)} · SEED ${cell.seed}</span><h3>${cell.houseIgnitedAt === null ? 'No house ignition in this scenario' : `House ignited at ${esc(cell.houseIgnitedAt)}`}</h3><p>Viewing one independent swarm agent’s scenario on the current property. The action plan below belongs to the original single-wind assessment.</p></section>`);
@@ -374,10 +407,14 @@ function renderActivity() {
   const inventory = state?.inventory;
   const corrections = (state?.fidelity || []).flatMap((round) => round.issues || []);
   const counts = state?.sims?.length || 0;
+  const swarmNow = state?.agent?.type === 'swarm' ? state.agent : null;
   const stories = [
-    inventory ? `${plural(inventory.objects?.length || 0, 'feature')} identified from the video.` : state?.spec_versions?.length && !state.video ? 'Illustrative property; no real video surveyed.' : 'Identify visible features and materials.',
-    state?.spec_versions?.length ? `${plural(summary.sceneEdits, 'model edit')} · ${plural(state.fidelity?.length || 0, 'comparison')}.` : 'Generate and compare the scene.',
-    counts ? `${plural(counts, 'recorded test')} · ${summary.pendingTests ? 'verifying the latest changes.' : summary.applied.length ? `${plural(summary.fixGroups.length, 'fix type')} re-tested.` : state?.status === 'running' ? 'evaluating changes.' : 'no fixes applied.'}` : 'Simulate ember exposure and test any required fixes.',
+    inventory ? `${plural(inventory.objects?.length || 0, 'feature')} identified · ${(inventory.uncertain || []).length} coverage gaps.` : state?.spec_versions?.length && !state.video ? 'Illustrative property; no real video surveyed.' : 'Identify visible features and materials.',
+    state?.spec_versions?.length ? `${state.spec_versions[0] ? 'Model generated' : ''}${summary.sceneEdits ? ` · ${plural(summary.sceneEdits, 'repair')}` : ''}.` : 'Write the 3D model from the survey.',
+    state?.fidelity?.length ? `${plural(state.fidelity.length, 'comparison round')} · ${plural(summary.sceneEdits, 'model correction')}.` : 'Compare real frames with model renders.',
+    state?.sims?.length ? `Original property: ${state.sims[0].result.houseIgnited ? `house ignited at ${state.sims[0].result.houseIgnitedAt}` : 'no house ignition'}.` : 'Run the baseline ember storm.',
+    counts > 1 ? `${plural(summary.fixGroups.length, 'change type')} applied and re-tested.` : 'Apply catalog changes and re-test.',
+    swarmNow ? `${swarmNow.local_check?.grid?.length || 0} of 24 scenarios verified.` : 'Optional: 24 scenario agents.',
     state?.report ? `${plural(summary.suggestions.length, 'priority')} with reasons and cost bands.` : 'Rank and explain the next steps.',
   ];
   let activity = PHASES.map((phase, index) => {
@@ -410,15 +447,22 @@ const chain = (result) => result.chain?.length ? `<ol class="chain">${result.cha
 function renderEvidence(summary) {
   const { before, latest, applied } = summary;
   const rounds = state?.fix_rounds || [];
-  $('simulationNote').textContent = rounds.length || summary.pendingTests ? 'Recorded before/after comparisons use the same wind and random seed within each round.' : before ? state?.status === 'running' ? 'The baseline is recorded. The agent is evaluating the result and testing any required changes.' : 'Only the baseline model was tested. The suggestions in the report were not applied or re-tested.' : 'Recorded tests will appear here. Any before/after comparison uses the same wind and random seed.';
+  const efacts = resultFacts(state);
+  $('simulationNote').textContent = (efacts?.hasBaseline ? scopeLine(efacts, direction) + '. ' : '') + (rounds.length || summary.pendingTests ? 'Recorded before/after comparisons use the same wind and random seed within each round.' : before ? state?.status === 'running' ? 'The baseline is recorded. The agent is evaluating the result and testing any required changes.' : 'Only the baseline model was tested. The suggestions in the report were not applied or re-tested.' : 'Recorded tests will appear here. Any before/after comparison uses the same wind and random seed.');
   let simulations = before ? rounds.length ? rounds.map((round) => `<h3>${round.tag === 'wind' ? 'New wind' : 'Mitigation'} · round ${round.round} · wind from ${direction(round.wind)}</h3>${(round.plan?.fixes || []).some((fix) => fix.evidence_frame) ? `<div class="evrow">${round.plan.fixes.filter((fix) => fix.evidence_frame).map((fix) => `<figure><img src="${esc(fix.evidence_frame)}" data-seek="${esc(fix.seen_in_video_at)}" alt="Footage at ${esc(fix.seen_in_video_at)}" loading="lazy"><figcaption>Footage ${esc(fix.seen_in_video_at)} · ${esc(fixLabel(null, fix.fix))}<br><span>${esc(fix.evidence || '')}</span></figcaption></figure>`).join('')}</div>` : ''}<div class="ba"><div><h4>Original for this round ${pill(round.before)}</h4><video src="${esc(round.before_video)}" controls muted preload="metadata"></video>${chain(round.before)}</div><div><h4>After tested fixes ${pill(round.after)}</h4><video src="${esc(round.after_video)}" controls muted preload="metadata"></video>${chain(round.after)}<p>${round.verdict.sim_agrees ? 'The agent’s verification agrees with the simulator.' : 'The agent disagreed. This result uses the simulator’s recorded outcome.'}</p></div></div>`).join('') : `<div class="ba"><div><h4>Baseline simulation ${pill(before.result)}</h4><video src="${esc(before.video)}" controls muted preload="metadata"></video>${chain(before.result)}<p>${before.result.ignited.length} modeled objects ignited. ${before.result.houseIgnited ? 'The house also ignited.' : 'The house did not ignite.'}</p></div><div class="no-after"><strong>${state?.status === 'running' ? 'Assessment still in progress' : 'No “after” test was run'}</strong><p>${state?.status === 'running' ? 'The agent is evaluating the baseline and testing changes where needed. Follow its progress on the right.' : 'The agent did not apply mitigation fixes. Its report lists suggestions for you to consider; their effects have not been verified by a second simulation.'}</p></div></div>` : empty('The first recorded ember test will appear here.');
   if (summary.pendingTests) simulations += `<h3>Latest re-test · agent verification in progress</h3><div class="ba"><div><h4>Recorded result ${pill(latest.result)}</h4><video src="${esc(latest.video)}" controls muted preload="metadata"></video>${chain(latest.result)}</div><div class="no-after"><strong>The agent is checking this re-test</strong><p>Changes were applied to the model before this recording. The confirmed fix list and explanation will appear after verification.</p></div></div>`;
   paint('sims', simulations);
-  paint('fidelity', state?.fidelity?.length ? state.fidelity.map((round, index) => `<details class="round" ${index === state.fidelity.length - 1 ? 'open' : ''}><summary><span>Comparison round ${round.round}</span><span class="pill ${round.pass ? 'good' : 'neutral'}">${round.pass ? 'Agent accepted the match' : `${round.issues?.length || 0} corrections requested`}</span></summary>${round.issues?.length ? `<ul class="issues">${round.issues.map((issue) => `<li><b>Issue:</b> ${esc(issue.problem)}<br><b>Correction:</b> ${esc(issue.fix)}</li>`).join('')}</ul>` : ''}<div class="pairs">${round.pairs.map((pair) => `<figure><img src="${esc(pair.real)}" loading="lazy" alt="Original footage at ${esc(pair.ts)}"><figcaption>Original footage · ${esc(pair.ts)}</figcaption></figure><figure><img src="${esc(pair.render)}" loading="lazy" alt="Model render for camera ${esc(pair.id)}"><figcaption>Model render · ${esc(pair.ts)}</figcaption></figure>`).join('')}</div><p>Agent-assigned match score: ${esc(round.score)}/10. This is a visual comparison, not an independent accuracy certification.</p></details>`).join('') : empty(state?.spec_versions?.length && !state.video ? 'The illustrative property skips video matching.' : 'Video-to-model comparisons will appear after scene generation.'));
+  paint('fidelity', state?.fidelity?.length ? state.fidelity.map((round, index) => `<details class="round" ${index === state.fidelity.length - 1 ? 'open' : ''}><summary><span>Comparison round ${round.round}</span><span class="pill ${round.pass ? 'good' : 'neutral'}">${round.pass ? 'Agent accepted the match' : `${round.issues?.length || 0} corrections requested`}</span></summary>${round.issues?.length ? `<ul class="issues">${round.issues.map((issue) => `<li><b>Issue:</b> ${esc(issue.problem)}<br><b>Correction:</b> ${esc(issue.fix)}</li>`).join('')}</ul>` : ''}<div class="pairs">${round.pairs.map((pair) => `<figure><img src="${esc(pair.real)}" loading="lazy" alt="Original footage at ${esc(pair.ts)}"><figcaption>Original footage · ${esc(pair.ts)}</figcaption></figure><figure><img src="${esc(pair.render)}" loading="lazy" alt="Model render for camera ${esc(pair.id)}"><figcaption>Model render · ${esc(pair.ts)}</figcaption></figure>`).join('')}</div><p>AI comparison score: ${esc(round.score)}/10. Not a calibrated measure of real-world accuracy.</p></details>`).join('') : empty(state?.spec_versions?.length && !state.video ? 'The illustrative property skips video matching.' : 'Video-to-model comparisons will appear after scene generation.'));
   $('fidelityCount').textContent = state?.fidelity?.length || 0;
   paint('testStrip', latest ? `<p><strong>${state.sims.length} recorded test${state.sims.length === 1 ? '' : 's'}</strong> · Wind ${direction(latest.wind)}${latest.mph ? ` at ${latest.mph} mph` : ''}${latest.duration ? ` · ${latest.duration}s exposure` : ''}<br>${summary.pendingTests ? 'Changes were re-tested; verification is in progress.' : applied.length ? 'Model changes were applied and re-tested.' : state?.status === 'running' ? 'The agent is evaluating this result and any required changes.' : 'Suggestions have not been applied or re-tested.'}</p><button data-open-tab="sims">Watch evidence ↗</button>` : `<p>${state ? 'Preparing this property’s first recorded ember test.' : 'Start an assessment to generate a model from footage and record an ember test.'}</p>`);
   const report = state?.report;
-  paint('report', report ? `<span class="eyebrow">HOMEOWNER ACTION PLAN</span><h2>${esc(report.headline)}</h2><p class="report-note">${applied.length ? `${plural(applied.length, 'fix')} were tested in the model. This report also describes recommendations and remaining risks.` : 'These are recommendations. No mitigation fixes were applied or re-tested during this assessment.'} Cost bands are rough and relative; they are not quotes.</p><h3>Recommendations, in priority order</h3><ol>${(report.fixes_ranked || []).map((fix) => `<li><b>${esc(fix.title)}</b> <span class="pill neutral">${esc(fix.cost)}</span><br>${esc(fix.why)}<br>Expected benefit: ${esc(fix.effect)}</li>`).join('')}</ol><h3>First 5 feet: checklist</h3><ul>${(report.zone0_checklist || []).map((item) => `<li>${esc(item)}</li>`).join('')}</ul><p>${esc(report.caveats)}</p>` : empty('The report appears here when the assessment is complete.'));
+  const rfacts = resultFacts(state), rv = verdict(rfacts), fresh = reportFreshness(state);
+  const appliedIdsR = new Set(applied.map((item) => item.fix));
+  const setEffect = rfacts?.tested ? testedWindLine(rfacts, direction) : '';
+  const provenance = fresh === 'stale' ? '<p class="stale-note">This plan was written before newer tests ran. <button data-update-report>Update action plan</button></p>'
+    : fresh === 'legacy' ? '<p class="stale-note">Legacy plan: the tests it was prepared from were not recorded. <button data-update-report>Update action plan</button></p>'
+    : state?.report_scope ? `<p class="report-note">Prepared from scene v${esc(state.report_scope.spec_n)} · ${state.report_scope.sims} recorded tests · ${state.report_scope.swarm_checked ? `all-wind check ${state.report_scope.swarm_checked}/${PLANNED_SCENARIOS}` : 'no all-wind check'}.</p>` : '';
+  paint('report', report ? `<span class="eyebrow">HOMEOWNER ACTION PLAN</span><p class="scope-line">${esc(scopeLine(rfacts, direction))}</p><h2>${esc(rv ? rv.title : report.headline)}</h2>${setEffect ? `<p class="facts-line">${esc(setEffect)}</p>` : ''}${rfacts?.swarm ? `<p class="facts-line">All-wind check: ${rfacts.swarm.checked} of ${PLANNED_SCENARIOS} scenarios checked · house ignited in ${rfacts.swarm.ignited} · no house ignition in ${rfacts.swarm.noIgnition}${rfacts.swarm.complete ? '' : ' (incomplete)'}.</p>` : '<p class="facts-line">Other wind directions have not been checked.</p>'}${provenance}<p class="report-note">${esc(report.headline)}</p><p class="report-note">Cost bands ($ / $$ / $$$) are rough and relative, not quotes. Fixes marked “in the tested set” were applied together in the model; their combined effect is shown above, and no single fix's contribution was isolated.</p><h3>Recommendations, in priority order</h3><ol>${(report.fixes_ranked || []).map((fix) => { const t = fixInTestedSet(fix, appliedIdsR, CATALOG); return `<li><b>${esc(fix.title)}</b> <span class="pill neutral">${esc(fix.cost)}</span> <span class="pill ${t ? 'good' : 'neutral'}">${t ? 'In tested set' : 'Suggested · not tested'}</span><br>${esc(fix.why)}</li>`; }).join('')}</ol><h3>First 5 feet: checklist</h3><ul>${(report.zone0_checklist || []).map((item) => `<li>${esc(item)}</li>`).join('')}</ul><p>${esc(report.caveats)}</p>` : empty('The report appears here when the assessment is complete.'));
 }
 function renderAgent() {
   const agent = state?.agent;
@@ -453,14 +497,19 @@ function renderAgent() {
     failed: extended.error || 'The extended test could not finish. Completed assessment results are still available below.',
   };
   $('extendedProgress').textContent = messages[extended.phase];
-  paint('scenarioGrid', `<table class="scenario-matrix"><caption>Locally verified scenarios · wind from each compass direction</caption><thead><tr><th scope="col">Seed</th>${WINDS.map((wind) => `<th scope="col">${direction(wind)}<small>${wind}°</small></th>`).join('')}</tr></thead><tbody>${SEEDS.map((seed) => `<tr><th scope="row">${seed}</th>${WINDS.map((wind) => {
-    const cell = extended.cells.find((item) => item.seed === seed && item.wind === wind);
-    const selected = selectedScenario?.wind === wind && selectedScenario?.seed === seed;
-    const label = cell.verified ? cell.outcome === 'no_ignition' ? 'Holds' : cell.houseIgnitedAt : cell.worker?.status || 'queued';
-    // Earlier ignition = hotter cell (90 s exposure).
-    const heat = cell.houseIgnitedAt ? Math.max(0.15, 1 - toSec(cell.houseIgnitedAt) / 90).toFixed(2) : 0;
-    return `<td><button class="scenario-cell ${cell.outcome} ${selected ? 'selected' : ''}" style="--heat:${heat}" data-scenario="${wind}:${seed}" ${cell.verified ? '' : 'disabled'} aria-pressed="${selected}" aria-label="Agent wind ${direction(wind)}, seed ${seed}: ${esc(label)}">${cell.outcome === 'no_ignition' ? '✓' : esc(label)}</button></td>`;
-  }).join('')}</tr>`).join('')}</tbody><tfoot><tr><th scope="row">Holds</th>${byDir.map((d) => `<td class="dir-total ${!d.n ? '' : d.holds === d.n ? 'good' : d.holds === 0 ? 'bad' : 'warn'}">${d.n ? `${d.holds}/${d.n}` : '—'}</td>`).join('')}</tr></tfoot></table>`);
+  const DIR_NAMES = { 0: 'North', 45: 'Northeast', 90: 'East', 135: 'Southeast', 180: 'South', 225: 'Southwest', 270: 'West', 315: 'Northwest' };
+  const cellLabel = (cell) => cell.verified ? (cell.outcome === 'no_ignition' ? ['✓', 'No ignition'] : ['🔥', `Ignition · ${cell.houseIgnitedAt}`])
+    : cell.outcome === 'failed' ? ['✕', 'Failed to complete'] : cell.worker?.status === 'verifying' ? ['…', 'Awaiting verification'] : ['running', 'launching'].includes(cell.worker?.status) ? ['⟳', 'Running'] : ['–', 'Not run'];
+  paint('scenarioGrid', `<p class="matrix-summary"><strong>${extended.checked} / ${PLANNED_SCENARIOS} verified</strong> · <strong>${extended.holds} / ${PLANNED_SCENARIOS} without house ignition</strong></p><p class="matrix-note">This fraction describes the tested scenarios; it is not a real-world survival probability. Only locally verified outcomes are counted.</p><div class="matrix-scroll"><table class="scenario-matrix rows"><thead><tr><th scope="col">Wind from</th>${SEEDS.map((seed) => `<th scope="col">Trial ${seed}</th>`).join('')}<th scope="col">No ignition</th></tr></thead><tbody>${WINDS.map((wind) => {
+    const cells = SEEDS.map((seed) => extended.cells.find((item) => item.seed === seed && item.wind === wind));
+    const d = byDir.find((x) => x.wind === wind);
+    return `<tr><th scope="row">${DIR_NAMES[wind]}</th>${cells.map((cell) => {
+      const selected = selectedScenario?.wind === wind && selectedScenario?.seed === cell.seed;
+      const [icon, text] = cellLabel(cell);
+      const heat = cell.houseIgnitedAt ? Math.max(0.15, 1 - toSec(cell.houseIgnitedAt) / 90).toFixed(2) : 0;
+      return `<td><button class="scenario-cell ${cell.outcome} ${selected ? 'selected' : ''}" style="--heat:${heat}" data-scenario="${wind}:${cell.seed}" ${cell.verified ? '' : 'disabled'} aria-pressed="${selected}" aria-label="Wind from ${DIR_NAMES[wind]}, trial ${cell.seed}: ${esc(text)}"><span class="cell-icon" aria-hidden="true">${icon}</span>${esc(text)}</button></td>`;
+    }).join('')}<td class="dir-total ${!d.n ? '' : d.holds === d.n ? 'good' : d.holds === 0 ? 'bad' : 'warn'}">${d.n ? `${d.holds} / ${d.n}` : '—'}</td></tr>`;
+  }).join('')}</tbody></table></div>`);
   renderConsensus(extended);
   const timings = [
     ['First remote agent started', extended.timings.first_agent_started_seconds],
@@ -501,7 +550,7 @@ function renderConsensus(extended) {
   const failing = extended.cells.filter((cell) => cell.verified && cell.outcome === 'ignited').length;
   paint('agentConsensus', !extended.checked ? '' : !ranked.length
     ? `<h3>What the agents recommend next</h3><p class="section-help">${failing ? 'No new catalog fixes were suggested.' : 'Nothing: the house held in every checked scenario.'}</p>`
-    : `<h3>What the agents recommend next</h3><p class="section-help">Fixes the scenario agents suggested for the cases that still ignite, counted across agents. Suggestions only — not applied or re-tested.</p><ol class="consensus-list">${ranked.map((item) => `<li><span class="consensus-bar" style="--share:${(item.count / Math.max(1, failing)).toFixed(2)}"></span><strong>${esc(fixLabel(null, item.fix.fix))}</strong><small>${esc(String(item.fix.target))} · ${esc(CATALOG[item.fix.fix]?.cost || '')}</small><em>${item.count} agent${item.count === 1 ? '' : 's'} · ${[...item.winds].join(', ')}</em></li>`).join('')}</ol>`);
+    : `<h3>Suggestions from scenario agents</h3><p class="section-help">Counted across agents for the scenarios that still ignite. How often a change is suggested is not evidence that it works — these are <strong>Suggested · Not tested</strong>.</p><ol class="consensus-list">${ranked.map((item) => `<li><span class="consensus-bar" style="--share:${(item.count / Math.max(1, failing)).toFixed(2)}"></span><strong>${esc(fixLabel(null, item.fix.fix))}</strong><small>${esc(String(item.fix.target))} · ${esc(CATALOG[item.fix.fix]?.cost || '')}</small><em>Suggested by ${item.count} agent${item.count === 1 ? '' : 's'} · ${[...item.winds].join(', ')} · Not tested</em></li>`).join('')}</ol>`);
 }
 
 function renderScenarioPreviews() {
@@ -625,6 +674,37 @@ document.addEventListener('click', (event) => {
   }
   if (event.target.closest('#replayScenario')) replayScenario();
 });
+document.addEventListener('click', async (event) => {
+  const button = event.target.closest('[data-update-report]'); if (!button || !runId) return;
+  button.disabled = true; button.textContent = 'Updating…';
+  try { await api(`/api/runs/${runId}/report`, { method: 'POST' }); } catch (error) { notify(error.message); button.disabled = false; button.textContent = 'Update action plan'; }
+});
+// "Do these first" → show where the change applies on the model.
+document.addEventListener('click', async (event) => {
+  const item = event.target.closest('[data-show-fix]'); if (!item) return;
+  const fixId = item.dataset.showFix || Object.keys(CATALOG).find((k) => CATALOG[k].title === item.dataset.title);
+  if (versionKind !== 'changes') await setVersion('changes');
+  const ids = (spec?.fixed || []).filter((f) => f.fix === fixId).map((f) => f.id);
+  const group = groups.find((g) => g.ids?.some((id) => ids.includes(id)));
+  if (group) { openHazardCard(group); $('viewerShell').scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+  else openTab('report');
+});
+// Setup lives in a panel under the header: open by default when nothing is loaded.
+// Entry mode: intro + upload on the left, the shared 3D viewer as an illustrative preview on the right.
+function setSetup(open) {
+  document.body.classList.toggle('entry-mode', open);
+  $('entry').hidden = !open;
+  (open ? $('entryViewerSlot') : $('workspaceViewerSlot')).appendChild($('viewerShell'));
+  $('newAssessment').textContent = open && runId ? 'Back to assessment' : 'New assessment';
+  requestAnimationFrame(resize);
+}
+$('newAssessment').onclick = () => setSetup(!document.body.classList.contains('entry-mode'));
+document.addEventListener('click', (event) => {
+  if (event.target.closest('[data-open-setup]')) setSetup(true);
+  if (event.target.closest('[data-load-illustrative]')) $('illustrative').click();
+  if (event.target.closest('#heroSample')) $('sample').click();
+  if (event.target.closest('[data-run-swarm]')) { if (!$('agent').disabled) $('agent').click(); openTab('sims'); }
+});
 $('windTest').onclick = async () => {
   $('windTest').disabled = true; notify();
   try { const data = new FormData(); data.append('wind', $('judgeWind').value); await api(`/api/runs/${runId}/wind`, { method: 'POST', body: data }); openTab('sims'); }
@@ -647,4 +727,137 @@ const { kit, spec: illustrativeSpec } = createKit(); new Function('kit', demoSce
 render(); requestAnimationFrame(animate);
 const linked = new URLSearchParams(location.search).get('run');
 if (linked && /^[a-zA-Z0-9-]+$/.test(linked)) loadRun(linked);
+else { setSetup(true); }
 window.addEventListener('beforeunload', () => eventSource?.close());
+
+// ===================== Inspection-tool interactions =====================
+let paused = false, selectedKey = null, versionKind = 'changes';
+const DEMO_FIXES = [{ fix: 'clear_gutters', target: 'all' }, { fix: 'screen_vents', target: 'all' }, { fix: 'clear_zone0_plants' }, { fix: 'gravel_zone0', target: 'all' }, { fix: 'enclose_deck', target: 'all' }];
+const illustrativeFixed = applyFixes(illustrativeSpec, DEMO_FIXES).spec;
+
+function keepCamera(fn) {
+  const cam = camera.position.clone(), target = controls.target.clone();
+  fn(); camera.position.copy(cam); controls.target.copy(target);
+}
+// Original property | With changes — same camera, same layers.
+async function setVersion(kind) {
+  versionKind = kind;
+  $('segOriginal').classList.toggle('on', kind === 'original'); $('segChanges').classList.toggle('on', kind === 'changes');
+  closeHazardCard();
+  if (!runId) { keepCamera(() => showSpec(kind === 'original' ? illustrativeSpec : illustrativeFixed, true)); applyLayers(); return; }
+  const n = kind === 'original' ? state?.base_spec : state?.spec_versions?.at(-1)?.n;
+  if (n === undefined) return;
+  try { const next = await api(`/api/runs/${runId}/spec/${n}`); keepCamera(() => showSpec(next)); $('version').value = n; applyLayers(); } catch (error) { notify(error.message); }
+}
+$('segOriginal').onclick = () => setVersion('original');
+$('segChanges').onclick = () => setVersion('changes');
+
+// Camera tools
+$('resetCam').onclick = () => { const c = spec?.cameras?.[0]; if (c) { camera.position.set(...c.pos); controls.target.set(...c.lookAt); } else { camera.position.set(90, 80, 110); controls.target.set(0, 5, 0); } };
+$('topView').onclick = () => { controls.target.set(0, 0, 0); camera.position.set(0.01, 190, 0.01); };
+$('fullscreen').onclick = () => { const shell = $('viewerShell'); if (document.fullscreenElement) document.exitFullscreen(); else shell.requestFullscreen?.(); };
+document.addEventListener('fullscreenchange', () => requestAnimationFrame(resize));
+
+// Layers
+function applyLayers() {
+  const hz = $('layerHazards').checked, fx = $('layerFixes').checked;
+  labelFilter = hz && fx ? 'all' : hz ? 'risk' : fx ? 'fix' : 'off';
+  renderLegend();
+  const zone = scene.getObjectByName('zone0'); if (zone) zone.visible = $('layerZone').checked;
+  $('compass').hidden = !$('layerWind').checked;
+}
+['layerHazards', 'layerFixes', 'layerZone', 'layerWind', 'layerLabels'].forEach((id) => { $(id).onchange = applyLayers; });
+
+// Compass + wind arrow (the arrow points where the wind blows to)
+function currentWind() { return sim?.opts.windFrom ?? state?.sims?.at(-1)?.wind ?? state?.conditions?.wind ?? +$('wind').value; }
+function updateCompass() {
+  $('compass').style.transform = `rotate(${controls.getAzimuthalAngle()}rad)`;
+  $('windArrow').style.transform = `translate(-50%, -50%) rotate(${currentWind() + 180}deg)`;
+  $('playWind').textContent = `Wind from ${direction(currentWind())} · ${state?.conditions?.mph ?? 30} mph`;
+}
+
+// Playback: play/pause, timeline seek, speed
+const startPreview = $('play').onclick;
+$('play').onclick = () => {
+  if (sim && !sim.done) { paused = !paused; $('play').innerHTML = paused ? '<span aria-hidden="true">▷</span> Resume' : '<span aria-hidden="true">❚❚</span> Pause'; return; }
+  paused = false; keepCamera(() => startPreview()); $('play').innerHTML = '<span aria-hidden="true">❚❚</span> Pause';
+};
+$('simTimeline').oninput = () => {
+  if (!spec) return;
+  const t = +$('simTimeline').value, opts = sim ? { ...sim.opts } : { windFrom: currentWind(), mph: state?.conditions?.mph ?? 30, seed: state?.conditions?.seed ?? 7 };
+  keepCamera(() => showSpec(spec, !runId));
+  sim = new Sim(spec, opts); simView = new SimView(scene, built, sim);
+  while (sim.t < t && !sim.done) sim.step();
+  simView.update(0.05); paused = true; applyLayers();
+  $('simClock').textContent = `${fmtTime(sim.t)} / ${fmtTime(sim.opts.duration)}`;
+  $('play').innerHTML = '<span aria-hidden="true">▷</span> Resume';
+};
+
+// Hazard / change detail card: click a marker → fly there and explain it.
+function flyToPos(pos) {
+  const target = new THREE.Vector3(...pos);
+  const offset = camera.position.clone().sub(controls.target).setLength(48);
+  flight = { t: 0, fromPos: camera.position.clone(), fromTarget: controls.target.clone(), toPos: target.clone().add(offset), toTarget: target };
+}
+controls.addEventListener('start', () => { flight = null; });
+const KIND_WORDS = [['gutter', 'gutter'], ['vent', 'vent'], ['fence', 'fence'], ['mulch', 'mulch'], ['deck', 'deck'], ['firewood', 'firewood'], ['juniper', 'plant'], ['plant', 'plant'], ['tree', 'plant'], ['shrub', 'plant']];
+function footageFor(label) {
+  const kind = KIND_WORDS.find(([w]) => label.toLowerCase().includes(w))?.[1];
+  const obj = kind && (state?.inventory?.objects || []).find((o) => o.kind === kind && o.seen_at?.length);
+  return obj ? obj.seen_at[0] : null;
+}
+function closeHazardCard() { $('hazardCard').hidden = true; selectedKey = null; }
+function openHazardCard(group) {
+  selectedKey = group.key; flyToPos(group.positions[0]);
+  const chain = state?.sims?.[0]?.result?.chain || [];
+  const step = chain.find((c) => group.ids.includes(c.obj));
+  const ts = footageFor(group.label);
+  const num = group.type === 'fix' ? '✓' : String(group.n).padStart(2, '0');
+  const fact = group.type === 'fix' ? 'Applied in the 3D model (a digital change). The work still needs to be done at the property.'
+    : step ? `In the original test this ignited at ${step.time}, on the path to the house.` : state ? 'Not on the house-ignition path in the original test.' : 'Illustrative hazard on a sample property.';
+  $('hazardCard').innerHTML = `<button class="card-close" aria-label="Close">×</button><h4><span class="num ${group.type}">${num}</span>${esc(group.label)}</h4>
+    <p>${ts ? `Similar feature seen in your footage at ${esc(ts)}.` : runId ? 'Not matched to a footage timestamp.' : 'Sample property · no footage.'}</p><p>${esc(fact)}</p>
+    <div class="card-actions">${ts ? `<button data-card="footage" data-ts="${esc(ts)}">View footage</button>` : ''}<button data-card="replay">Replay ignition</button>${group.type === 'risk' ? '<button data-card="change" class="primary">View proposed change</button>' : '<button data-card="original">View original</button>'}</div>`;
+  $('hazardCard').hidden = false;
+}
+let downAt = null;
+vp.addEventListener('pointerdown', (e) => { downAt = [e.clientX, e.clientY]; });
+vp.addEventListener('pointerup', (e) => {
+  if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 5 || e.target.closest('#hazardCard, .pin-legend')) return;
+  const rect = vp.getBoundingClientRect(), x = e.clientX - rect.left, y = e.clientY - rect.top;
+  const hit = pins.find((p) => Math.hypot(p.x - x, p.y - y) < 14);
+  if (hit) openHazardCard(groups.find((g) => g.key === hit.key)); else closeHazardCard();
+});
+$('hazardCard').addEventListener('click', (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.classList.contains('card-close')) { closeHazardCard(); return; }
+  const act = b.dataset.card;
+  if (act === 'footage') { const [m, sec] = b.dataset.ts.split(':').map(Number); $('player').currentTime = m * 60 + sec; $('player').play().catch(() => {}); $('player').scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+  if (act === 'replay') setVersion('original').then(() => { sim = null; paused = false; $('play').click(); });
+  if (act === 'change') setVersion('changes');
+  if (act === 'original') setVersion('original');
+});
+
+// Upload: drag-and-drop or picker; the main button starts once a file is chosen.
+const dz = $('dropzone');
+['dragenter', 'dragover'].forEach((t) => dz.addEventListener(t, (e) => { e.preventDefault(); dz.classList.add('drag'); }));
+['dragleave', 'drop'].forEach((t) => dz.addEventListener(t, () => dz.classList.remove('drag')));
+dz.addEventListener('drop', (e) => { e.preventDefault(); if (e.dataTransfer.files[0]) { $('video').files = e.dataTransfer.files; $('video').onchange(); } });
+$('start').onclick = () => { if (!$('video').files[0]) $('video').click(); else start('upload'); };
+const prevVideoChange = $('video').onchange;
+$('video').onchange = () => { prevVideoChange(); $('start').textContent = $('video').files[0] ? 'Analyze walkthrough' : 'Upload walkthrough'; };
+
+// Editable assessment name, remembered per run on this device.
+function nameKey() { return `zz.name.${runId || 'illustrative'}`; }
+function syncName() {
+  if (document.activeElement === $('assessmentName')) return;
+  let saved = null; try { saved = localStorage.getItem(nameKey()); } catch { /* storage unavailable */ }
+  const pretty = (n) => { const t = n.replace(/\.[a-z0-9]+$/i, '').replace(/[_-]+/g, ' ').replace(/\s\d{5,}$/, '').trim(); return t ? t[0].toUpperCase() + t.slice(1) : 'Home'; };
+  $('assessmentName').textContent = saved || (runId ? `${state?.source?.name ? pretty(state.source.name) : 'Home'} · Assessment ${runId.slice(-4)}` : 'Illustrative property');
+}
+$('assessmentName').addEventListener('blur', () => { try { localStorage.setItem(nameKey(), $('assessmentName').textContent.trim().slice(0, 60)); } catch { /* storage unavailable */ } });
+$('assessmentName').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); e.target.blur(); } });
+setInterval(syncName, 1000); syncName();
+
+// The illustrative preview starts on the original property (hazards visible).
+if (!runId) { versionKind = 'original'; $('segOriginal').classList.add('on'); $('segChanges').classList.remove('on'); }

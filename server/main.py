@@ -125,6 +125,16 @@ async def agent(rid: str, attach: str = Form("")):
     return {"ok": True, "id": run.state["agent"]["id"], "agents": 24, "concurrency": run.state["agent"]["concurrency"]}
 
 
+@app.post("/api/runs/{rid}/report")
+async def update_report(rid: str):
+    """Rewrites the action plan from the latest evidence (e.g. after a wind test or swarm)."""
+    run = get_run(rid)
+    if run.state["status"] != "done":
+        raise HTTPException(409, "run the pipeline first")
+    asyncio.create_task(pipeline.stage_report(run))
+    return {"ok": True}
+
+
 @app.post("/api/runs/{rid}/agent/cancel")
 async def cancel_swarm(rid: str):
     run = get_run(rid)

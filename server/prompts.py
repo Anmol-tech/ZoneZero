@@ -170,19 +170,22 @@ Return ONLY JSON:
 {{"verified": true|false, "chain_broken": true|false, "house_survives": true|false,
   "observations": ["timestamped things you saw in video 2"], "remaining_risk": "..."}}"""
 
-REPORT = """Write the homeowner's report for this property. Plain language, no jargon, honest about limits.
+REPORT = """Write the homeowner's action plan for this property. Plain language, no jargon, honest about limits.
 Property: {summary}
-Wind tested: {winds}
-Original run: {before}
-Fixes applied, in order, with verified effect: {steps}
-Final run: {after}
-All-winds check (24 agents, 8 directions x 3 seeds, on the final property): {swarm}
-Catalog (for cost bands): {catalog}
-If the all-winds check ran, the headline must reflect it honestly (e.g. "holds in 7 of 24 wind conditions"), and rank the
-fixes the agents converged on for the directions that still ignite.
+
+FACTS (recorded by the simulator). Use these numbers exactly as written, always with their units. Never calculate new
+numbers, differences or percentages, and never change seconds into minutes:
+{facts}
+
+Fixes already applied together in the model as one tested set (catalog ids): {tested}
+All-wind agent suggestions (not tested): {swarm}
+Catalog (ids, titles, cost bands): {catalog}
+
+Rules: the effect of the tested set belongs to the whole set; never claim an individual fix caused it. A fix that is not in
+the tested set is a suggestion that has not been tested.
 
 Return ONLY JSON:
-{{"headline": "one sentence",
-  "fixes_ranked": [{{"title": "...", "cost": "$|$$|$$$", "why": "what it stops, in one sentence", "effect": "e.g. house ignition 0:21 -> survives"}}],
-  "zone0_checklist": ["short actionable item", "..."],
+{{"headline": "one sentence that only restates the FACTS",
+  "fixes_ranked": [{{"fix_id": "catalog id", "title": "...", "cost": "$|$$|$$$", "why": "what it stops, in one sentence"}}],
+  "zone0_checklist": ["short actionable item not already listed above", "..."],
   "caveats": "one or two sentences: this is a planning aid based on IBHS/CAL FIRE ember guidance, not a certified assessment"}}"""

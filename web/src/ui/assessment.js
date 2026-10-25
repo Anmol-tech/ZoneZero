@@ -1,9 +1,12 @@
 // Keep observed risk, scene edits, and simulated fixes separate.
 export const PHASES = [
-  { title: "Review footage", detail: "Identify materials & nearby fuels", stages: ["prepare", "survey"] },
-  { title: "Build the model", detail: "Compare it with the real video", stages: ["generate", "fidelity"] },
-  { title: "Test ember exposure", detail: "Simulate ignition & test fixes", stages: ["simulate", "fix", "verify", "wind"] },
-  { title: "Make an action plan", detail: "Explain what to do next", stages: ["report", "done"] },
+  { title: "Reviewing your footage", detail: "Identify materials & nearby fuels", stages: ["prepare", "survey"] },
+  { title: "Building your property model", detail: "Write the 3D model", stages: ["generate"] },
+  { title: "Comparing the model with your video", detail: "Match viewpoints and correct", stages: ["fidelity"] },
+  { title: "Testing the original property", detail: "Baseline ember storm", stages: ["simulate"] },
+  { title: "Applying and testing changes", detail: "Fix, re-test, verify", stages: ["fix", "verify", "guardrail", "wind"] },
+  { title: "Checking additional wind directions", detail: "24 scenario agents", stages: ["agent"] },
+  { title: "Preparing your action plan", detail: "Rank the next steps", stages: ["report", "done"] },
 ];
 
 export function assessmentSummary(state) {

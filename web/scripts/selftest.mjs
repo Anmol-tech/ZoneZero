@@ -59,14 +59,14 @@ test('a recorded after-test awaiting agent verification remains explicitly pendi
 test('an interrupted generation step does not appear as a completed assessment', () => {
   const run = { ...base(), status: 'error' };
   const progress = phaseStates(run, [{ stage: 'survey' }, { stage: 'generate' }, { stage: 'error' }]);
-  assert.deepEqual(progress, ['complete', 'error', 'pending', 'pending']);
+  assert.deepEqual(progress, ['complete', 'error', 'pending', 'pending', 'pending', 'pending', 'pending']);
   assert.equal(assessmentSummary(run).tone, 'danger');
 });
 
 test('a run still preparing its video makes no final simulation claim', () => {
   const run = { ...base(), status: 'running', sims: [], report: null };
   assert.equal(assessmentSummary(run).label, 'Assessment in progress');
-  assert.deepEqual(phaseStates(run, [{ stage: 'prepare' }]), ['active', 'pending', 'pending', 'pending']);
+  assert.deepEqual(phaseStates(run, [{ stage: 'prepare' }]), ['active', 'pending', 'pending', 'pending', 'pending', 'pending', 'pending']);
 });
 
 test('remote success claims do not populate locally verified scenario cells', () => {
@@ -141,4 +141,55 @@ test('a partially failed swarm remains inspectable without appearing complete or
   assert.equal(result.holds, 1);
   assert.equal(result.elapsed, 40);
   assert.equal(result.cells.find((cell) => cell.wind === 0 && cell.seed === 1).outcome, 'failed');
+});
+
+// Audit F01–F05 acceptance cases for the shared result facts.
+import { resultFacts, verdict, testedWindLine, reportFreshness, fixInTestedSet } from '../src/ui/facts.js';
+const dir = (d) => ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][Math.round(d / 45) % 8];
+const swarmRun = (checked, survives) => ({
+  status: 'done', conditions: { wind: 45, mph: 30 }, final_spec: 3, sims: [simulation(true, '0:55')],
+  fix_rounds: [{ tag: 'fix', before: { houseIgnited: true, houseIgnitedAt: '0:55' }, after: { houseIgnited: true, houseIgnitedAt: '1:08' }, applied: [{ fix: 'clear_gutters', target: 'all' }] }],
+  agent: { type: 'swarm', id: 'swarm-1', local_check: { grid: Array.from({ length: checked }, () => ({})), survives } },
+});
+
+test('F01: the tested-wind change is stated in seconds, never minutes', () => {
+  const line = testedWindLine(resultFacts(swarmRun(24, 3)), dir);
+  assert.match(line, /55 s → 68 s, 13 s later/);
+  assert.doesNotMatch(line, /minute/);
+});
+
+test('F03: one checked pass with 23 pending is incomplete, not success', () => {
+  const v = verdict(resultFacts(swarmRun(1, 1)));
+  assert.equal(v.tone, 'neutral');
+  assert.match(v.title, /incomplete: 1 of 24 scenarios verified/);
+});
+
+test('F03: a complete check reports ignitions out of 24', () => {
+  const v = verdict(resultFacts(swarmRun(24, 3)));
+  assert.equal(v.title, 'Changes helped, but ignition occurred in 21 of 24 scenarios');
+  assert.equal(v.tone, 'warning');
+});
+
+test('F02: a swarm run after the plan marks the plan stale; provenance-less plans are legacy', () => {
+  const run = { ...swarmRun(24, 3), report: { headline: 'x' }, report_scope: { sims: 1, swarm_id: null, swarm_checked: 0 } };
+  assert.equal(reportFreshness(run), 'stale');
+  assert.equal(reportFreshness({ ...run, report_scope: { sims: 1, swarm_id: 'swarm-1', swarm_checked: 24 } }), 'current');
+  assert.equal(reportFreshness({ ...run, report_scope: undefined }), 'legacy');
+});
+
+test('F04: tested-set membership uses the catalog id, with a title fallback for legacy plans', () => {
+  const catalog = { clear_gutters: { title: 'Clean gutters / add metal gutter guards' }, screen_vents: { title: 'Vents' } };
+  const applied = new Set(['clear_gutters']);
+  assert.equal(fixInTestedSet({ fix_id: 'clear_gutters' }, applied, catalog), true);
+  assert.equal(fixInTestedSet({ title: 'clean gutters / add metal gutter guards' }, applied, catalog), true);
+  assert.equal(fixInTestedSet({ fix_id: 'screen_vents' }, applied, catalog), false);
+});
+
+test('F05: a later same-wind test is part of the tested-wind result; other winds are not', () => {
+  const run = swarmRun(24, 3);
+  run.fix_rounds.push({ tag: 'wind', wind: 45, before: { houseIgnitedAt: '1:08' }, after: { houseIgnitedAt: null }, applied: [] });
+  run.fix_rounds[0].wind = 45;
+  assert.equal(resultFacts(run).finalS, null);
+  run.fix_rounds[1].wind = 270;
+  assert.equal(resultFacts(run).finalS, 68);
 });

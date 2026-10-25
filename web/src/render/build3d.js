@@ -287,8 +287,13 @@ export function buildScene(spec) {
   const h = spec.house;
 
   root.add(flatPatch(800, 800, groundTexture("grass"), 0, 10));
-  const z0 = new THREE.Mesh(new THREE.PlaneGeometry(h.w + 10, h.d + 10), new THREE.MeshBasicMaterial({ color: 0xff6a3d, transparent: true, opacity: 0.12, depthWrite: false }));
-  z0.rotation.x = -Math.PI / 2; z0.position.y = 0.08; root.add(z0);
+  // First-5-ft band following the footprint (main block and wings); approximate where geometry is estimated.
+  const zone = new THREE.Group(); zone.name = 'zone0';
+  for (const r of [{ x: 0, z: 0, w: h.w, d: h.d }, ...(h.wings || [])]) {
+    const band = new THREE.Mesh(new THREE.PlaneGeometry(r.w + 10, r.d + 10), new THREE.MeshBasicMaterial({ color: 0xba4638, transparent: true, opacity: 0.12, depthWrite: false }));
+    band.rotation.x = -Math.PI / 2; band.position.set(r.x, 0.08, r.z); zone.add(band);
+  }
+  root.add(zone);
 
   for (const m of houseMeshes(h, 3)) reg("house", m);
 
@@ -474,8 +479,8 @@ export function buildScene(spec) {
 export function addLights(scene) {
   const sky = new THREE.Mesh(new THREE.SphereGeometry(700, 24, 12), new THREE.MeshBasicMaterial({ map: skyTexture(), side: THREE.BackSide, fog: false, depthWrite: false }));
   scene.add(sky);
-  scene.background = new THREE.Color(0xc9dbe9);
-  scene.fog = new THREE.Fog(0xdfe8ee, 220, 650);
+  scene.background = new THREE.Color(0xeef1f2);
+  scene.fog = new THREE.Fog(0xf1f2ef, 240, 700);
   scene.add(new THREE.HemisphereLight(0xdfeaff, 0x4a5a30, 1.1));
   const sun = new THREE.DirectionalLight(0xfff1dd, 2.4);
   sun.position.set(-90, 140, -60); sun.castShadow = true;
